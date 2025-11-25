@@ -1,14 +1,17 @@
-from pathlib import Path
+import time
 import yaml
-from typing import Optional
-
-from transformers import GPT
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
+from pathlib import Path
+from typing import Optional, List, Dict
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer, AdamW
 
+from ..Datasets.SMILES import SMILESDataset
+
+# --- Configuration Loading ---
 _config_path = Path(__file__).resolve().parent / "config.yaml"
-
 GPT_Model_Path: Optional[str] = None
+
 if _config_path.is_file():
     try:
         with _config_path.open("r", encoding="utf-8") as f:
@@ -23,109 +26,181 @@ class GPT:
 
     Attributes:
         model_path (str): The file path to the pre-trained GPT model.
-
-    Methods:
-        load_model(): Loads the GPT model from the specified path.
-        generate_molecule(prompt: str) -> str: Generates a drug-like molecule.
-        fine_tune(dataset_path: str): Fine-tunes the GPT model using a dataset located at the specified path.
-
-    Example:
-        gpt = GPT(model_path="path/to/model")
-        gpt.load_model()
-        molecule = gpt.generate_molecule(prompt="Generate a molecule with anti-cancer properties.")
-        gpt.fine_tune(dataset_path="path/to/dataset")
     """
 
     def __init__(self, model_path: Optional[str] = GPT_Model_Path):
         """
         Initializes the GPT model with the specified model path.
-
-        Args:
-            model_path (str, optional): The file path to the pre-trained GPT model. If not provided, defaults to the path specified in the configuration file.
-        
-        Raises:
-            ValueError: If the model_path is not provided and not found in the configuration.
         """
         self.model_path = model_path
         self.model = None
         self.tokenizer = None
-        self.device = None
-        if self.model_path is None:
-            raise ValueError("Model path must be provided either through the constructor or the configuration file.")
-    
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     def load_model(self):
         """
-        Loads the GPT model and tokenizer from self.model_path, moves the model to an available device,
-        and puts it in evaluation mode.
-
-        After calling this, self.model, self.tokenizer and self.device will be set.
+        Loads the GPT model and tokenizer from self.model_path.
         """
-
         if not self.model_path:
             raise ValueError("No model_path set for loading the model.")
 
         try:
-            # Load tokenizer and model (supports model identifier or local path)
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=True)
-            # Allow remote code if model requires custom classes; remove if you want to avoid executing model code.
             self.model = AutoModelForCausalLM.from_pretrained(self.model_path, trust_remote_code=True)
-
-            # Move model to device
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.model.to(self.device)
-
-            # Put model in eval mode (typical for generation/inference)
             self.model.eval()
-
             return self.model
         except Exception as exc:
             raise RuntimeError(f"Failed to load model from '{self.model_path}': {exc}") from exc
-        
-    def generate_molecule(self, prompt: Optional[str] = None) -> str:
+
+    def _prepare_model_for_training(self):
+        """
+        Internal helper: Ensures a model is loaded (custom or base GPT2) 
+        and the tokenizer is configured correctly for padding.
+        """
+        # 1. Try to load configured model if not loaded
+        if self.model is None and self.model_path:
+            try:
+                self.load_model()
+            except Exception:
+                pass # Fallback below
+
+        # 2. Fallback to GPT-2 if still no model
+        if self.model is None:
+            base = "gpt2"
+            try:
+                print(f"Loading base model {base} for fine-tuning...")
+                self.tokenizer = AutoTokenizer.from_pretrained(base, use_fast=True)
+                self.model = AutoModelForCausalLM.from_pretrained(base)
+                self.model.to(self.device)
+            except Exception as exc:
+                raise RuntimeError(f"Failed to load base model '{base}': {exc}") from exc
+
+        # 3. Fix Padding Token (Crucial for batch training)
+        if self.tokenizer.pad_token is None:
+            # Use EOS as PAD if available, or add a new token
+            self.tokenizer.pad_token = self.tokenizer.eos_token or "[PAD]"
+            if self.tokenizer.pad_token == "[PAD]":
+                self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+            
+            # Resize model embeddings to fit new pad token
+            self.model.resize_token_embeddings(len(self.tokenizer))
+
+    def generate_molecule(self, max_length: int = 100, temperature: float = 0.7) -> str:
         """
         Generates a drug-like molecule using the GPT model.
-        If prompt is None, generation starts from a BOS/pad/eos token (if available).
         """
         if self.model is None or self.tokenizer is None:
-            raise RuntimeError("Model and tokenizer must be loaded before generating molecules. Call load_model() first.")
+            raise RuntimeError("Model/Tokenizer not loaded. Call load_model() first.")
 
-        # Prepare inputs: either tokenize the prompt or synthesize a single start token
-        if prompt:
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-        else:
-            # try tokenizer/model config for a valid start token id
-            bos_id = getattr(self.tokenizer, "bos_token_id", None) or getattr(self.model.config, "bos_token_id", None)
-            pad_id = getattr(self.tokenizer, "pad_token_id", None) or getattr(self.model.config, "pad_token_id", None)
-            eos_id = getattr(self.tokenizer, "eos_token_id", None) or getattr(self.model.config, "eos_token_id", None)
+        # Determine start token
+        sos_id = getattr(self.tokenizer, "sos_token_id", None)
+        bos_id = getattr(self.tokenizer, "bos_token_id", None)
+        pad_id = getattr(self.tokenizer, "pad_token_id", None)
+        
+        # Fallback logic for start token
+        start_id = sos_id if sos_id is not None else (bos_id if bos_id is not None else pad_id)
+        
+        if start_id is None:
+            # As a last resort, use the first token in vocabulary (usually !)
+            start_id = 0 
 
-            start_id = bos_id or pad_id or eos_id
-            if start_id is None:
-                # fallback: tokenize empty string (may produce valid ids)
-                inputs = self.tokenizer("", return_tensors="pt", add_special_tokens=False).to(self.device)
-                if inputs["input_ids"].numel() == 0:
-                    raise RuntimeError("Unable to construct a valid start token for generation.")
-            else:
-                inputs = {
-                    "input_ids": torch.tensor([[start_id]], device=self.device),
-                    "attention_mask": torch.tensor([[1]], device=self.device)
-                }
+        eos_id = getattr(self.tokenizer, "eos_token_id", None)
 
-        # Generate output tokens
+        inputs = {
+            "input_ids": torch.tensor([[start_id]], device=self.device),
+            "attention_mask": torch.tensor([[1]], device=self.device),
+        }
+
+        gen_kwargs = dict(
+            **inputs,
+            max_length=max_length,
+            num_return_sequences=1,
+            do_sample=True,
+            top_k=50,
+            top_p=0.95,
+            temperature=temperature,
+        )
+
+        if eos_id is not None:
+            gen_kwargs["eos_token_id"] = eos_id
+
         with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_length=100,
-                num_return_sequences=1,
-                do_sample=True,
-                top_k=50,
-                top_p=0.95,
-                temperature=0.7,
-            )
+            outputs = self.model.generate(**gen_kwargs)
 
-        # Decode generated tokens to string
-        generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-        # Remove the prompt if one was provided
-        if prompt:
-            return generated_text[len(prompt):].strip()
-        return generated_text.strip()
+    def fine_tune(self, dataset_path: str, epochs: int = 1, batch_size: int = 8, lr: float = 5e-5):
+        """
+        Fine-tunes the GPT model using a SMILES dataset.
+        
+        Args:
+            dataset_path (str): Path to the .smi or .txt dataset.
+            epochs (int): Number of training epochs.
+            batch_size (int): Batch size.
+            lr (float): Learning rate.
+        """
+        ds_path = Path(dataset_path)
+
+        if not ds_path.exists():
+            raise FileNotFoundError(f"Dataset path does not exist: {ds_path}")
+        
+        # Handle Directory vs File input
+        target_file = ds_path
+        if ds_path.is_dir():
+            files = list(ds_path.glob("**/*.smi")) + list(ds_path.glob("**/*.txt"))
+            if not files:
+                raise FileNotFoundError("No .smi or .txt files found in directory.")
+            target_file = files[0]
+
+        # Ensure Model Resources
+        self._prepare_model_for_training()
+
+        # Prepare Data
+        print(f"Loading data from {target_file}...")
+        dataset = SMILESDataset(target_file, self.tokenizer)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        # Setup Optimizer
+        self.model.train()
+        optimizer = AdamW(self.model.parameters(), lr=lr)
+        
+        print(f"Starting training for {epochs} epochs on {self.device}...")
+
+        for epoch in range(epochs):
+            total_loss = 0
+            for step, batch in enumerate(loader):
+                # Move batch to device
+                b_input_ids = batch["input_ids"].to(self.device)
+                b_masks = batch["attention_mask"].to(self.device)
+                b_labels = batch["labels"].to(self.device)
+
+                outputs = self.model(
+                    input_ids=b_input_ids, 
+                    attention_mask=b_masks, 
+                    labels=b_labels
+                )
+                
+                loss = outputs.loss
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
+                
+                total_loss += loss.item()
+
+            avg_loss = total_loss / len(loader)
+            print(f"Epoch {epoch + 1}/{epochs} completed. Average Loss: {avg_loss:.4f}")
+
+        # Save Checkpoint
+        timestamp = int(time.time())
+        save_dir = Path.cwd() / f"finetuned_chembl_{timestamp}"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            self.model.save_pretrained(save_dir)
+            self.tokenizer.save_pretrained(save_dir)
+            print(f"Model saved to: {save_dir}")
+        except Exception as exc:
+            raise RuntimeError(f"Failed to save fine-tuned model: {exc}") from exc
+
+        return str(save_dir)
