@@ -3,55 +3,89 @@ import yaml
 import torch
 from pathlib import Path
 from typing import Optional, List, Dict
+from peft import get_peft_model, LoraConfig, TaskType, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, AdamW
+from transformers import AutoModelForCausalLM, AutoTokenizer, AdamW, BitsAndBytesConfig
 
 from ..Datasets.SMILES import SMILESDataset
 
 # --- Configuration Loading ---
 _config_path = Path(__file__).resolve().parent / "config.yaml"
-GPT_Model_Path: Optional[str] = None
+LLM_Model_Path: Optional[str] = None
 
 if _config_path.is_file():
     try:
         with _config_path.open("r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
-            GPT_Model_Path = cfg.get("GPT_Model_Path")
+            LLM_Model_Path = cfg.get("LLM_Model_Path")
     except Exception:
-        GPT_Model_Path = None
+        LLM_Model_Path = None
 
-class GPT:
+class LLM:
     """
-    A class representing a GPT model for drug generation. 
+    A class representing a LLM model for drug generation. 
 
     Attributes:
-        model_path (str): The file path to the pre-trained GPT model.
+        model_path (str): The file path to the pre-trained LLM model.
     """
 
-    def __init__(self, model_path: Optional[str] = GPT_Model_Path):
+    def __init__(self, model_path: Optional[str] = LLM_Model_Path):
         """
-        Initializes the GPT model with the specified model path.
+        Initializes the LLM model with the specified model path.
         """
         self.model_path = model_path
         self.model = None
         self.tokenizer = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.use_lora = False
 
-    def load_model(self):
+    def load_model(self, use_lora: bool = False):
         """
-        Loads the GPT model and tokenizer from self.model_path.
+        Loads model. If use_lora=True, loads in 4-bit quantization for Llama/Mistral efficiency.
         """
+        self.use_lora = use_lora
+        
         if not self.model_path:
-            raise ValueError("No model_path set for loading the model.")
+            raise ValueError("No model_path set.")
 
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=True)
-            self.model = AutoModelForCausalLM.from_pretrained(self.model_path, trust_remote_code=True)
-            self.model.to(self.device)
+            
+            if self.use_lora:
+                print(f"Loading {self.model_path} in 4-bit precision for LoRA...")
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16,
+                )
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.model_path,
+                    quantization_config=bnb_config,
+                    device_map="auto",
+                    trust_remote_code=True
+                )
+                self.model = prepare_model_for_kbit_training(self.model)
+                
+                # Attach LoRA adapters
+                peft_config = LoraConfig(
+                    task_type=TaskType.CAUSAL_LM, 
+                    r=8, 
+                    lora_alpha=32, 
+                    lora_dropout=0.05,
+                    target_modules=["q_proj", "v_proj"]
+                )
+                self.model = get_peft_model(self.model, peft_config)
+                self.model.print_trainable_parameters()
+                
+            else:
+                self.model = AutoModelForCausalLM.from_pretrained(self.model_path, trust_remote_code=True)
+                self.model.to(self.device)
+
             self.model.eval()
             return self.model
+            
         except Exception as exc:
-            raise RuntimeError(f"Failed to load model from '{self.model_path}': {exc}") from exc
+            raise RuntimeError(f"Failed to load model: {exc}") from exc
 
     def _prepare_model_for_training(self):
         """
@@ -88,7 +122,7 @@ class GPT:
 
     def generate_molecule(self, max_length: int = 100, temperature: float = 0.7) -> str:
         """
-        Generates a drug-like molecule using the GPT model.
+        Generates a drug-like molecule using the LLM model.
         """
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("Model/Tokenizer not loaded. Call load_model() first.")
@@ -132,7 +166,7 @@ class GPT:
 
     def fine_tune(self, dataset_path: str, epochs: int = 1, batch_size: int = 8, lr: float = 5e-5):
         """
-        Fine-tunes the GPT model using a SMILES dataset.
+        Fine-tunes the LLM model using a SMILES dataset.
         
         Args:
             dataset_path (str): Path to the .smi or .txt dataset.
@@ -160,6 +194,12 @@ class GPT:
         print(f"Loading data from {target_file}...")
         dataset = SMILESDataset(target_file, self.tokenizer)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        # NOTE: You might want to force use_lora=True here if you detect a large model name
+        if self.model is None:
+            # Simple heuristic: if 'llama' or 'mistral' in name, use LoRA
+            is_large = self.model_path and any(x in self.model_path.lower() for x in ['llama', 'mistral', 'falcon'])
+            self.load_model(use_lora=is_large)
 
         # Setup Optimizer
         self.model.train()
