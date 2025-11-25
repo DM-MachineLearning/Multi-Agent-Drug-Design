@@ -1,0 +1,5 @@
+fp_dim: 2048
+prop_dim: 4
+hidden_dim: 512
+lr: 1.0e-3
+batch_size: 64
