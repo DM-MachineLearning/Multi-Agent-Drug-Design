@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="Main_Image.png" width="100%" />
+  <img src="Main.png" width="100%" />
 </p>
 
 # Multi-Agent Drug Design (MADM)
