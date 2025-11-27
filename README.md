@@ -1,3 +1,8 @@
+
+<p align="center">
+  <img src="Main_Image.png" width="100%" />
+</p>
+
 # Multi-Agent Drug Design (MADM)
 
 This is a research-oriented skeleton repository for a multi-agent,
