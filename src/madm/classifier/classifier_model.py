@@ -1,28 +1,30 @@
-import torch
-import torch.nn as nn
-
-class ActivityClassifier(nn.Module):
+class DecisionMakingAgent:
     """
-    ECFP + 4 properties -> Active / Inactive logits.
+    Corresponds to the 'Decision making agent' circle in the diagram.
+    It takes raw scores and performs 'Classification' into Active/Inactive.
     """
+    def __init__(self, qed_weight=0.5, docking_weight=0.5, activity_threshold=0.4):
+        self.w_qed = qed_weight
+        self.w_dock = docking_weight
+        self.threshold = activity_threshold
 
-    def __init__(self, fp_dim: int = 2048, prop_dim: int = 4, hidden_dim: int = 512):
-        super().__init__()
-        input_dim = fp_dim + prop_dim
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 2),
-        )
+    def classify(self, candidate: dict) -> str:
+        """
+        Classifies a molecule as 'Active' or 'Inactive' based on the composite score.
+        """
+        # 1. Calculate Composite Score
+        # Normalize Docking if needed (assuming higher is better for this formula)
+        score = (candidate['QED'] * self.w_qed) + (candidate['Docking'] * self.w_dock)
+        
+        # 2. Apply Cross-Communication Penalty (The 'Feedback' loss component)
+        # If it's a copycat (high cross-similarity), we penalize it to 0.
+        if candidate.get('cross_similarity', 0) > 0.7:
+            score = 0.0
 
-    def forward(self, fp, props):
-        x = torch.cat([fp, props], dim=-1)
-        return self.net(x)
+        candidate['Final_Score'] = score
 
-    @torch.no_grad()
-    def active_prob(self, fp, props):
-        logits = self(fp, props)
-        return torch.softmax(logits, dim=-1)[..., 1]
+        # 3. Classification Step
+        if score > self.threshold:
+            return "Active"
+        else:
+            return "Inactive"

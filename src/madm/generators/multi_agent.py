@@ -1,193 +1,236 @@
 import os
 import torch
-import numpy as np
 import tempfile
 import random
 from pathlib import Path
-from typing import List, Tuple, Set
+from typing import List, Set
 
 from rdkit import Chem
-from rdkit.Chem import AllChem, QED, DataStructs
+from rdkit.Chem import AllChem, DataStructs
 
 # Import your existing agents
 from Generators.GPT import LLM
 from Generators.VAE import VAE
 from madm.generators.property_agent import PropertyAgent
+from madm.classifier.classifier_model import DecisionMakingAgent
 
 # ==========================================
-# 1. Experience Replay Buffer (Memory)
+# 1. Dual-Memory System
 # ==========================================
-class ExperienceBuffer:
-    """
-    Stores high-quality molecules found across all rounds.
-    Prevents 'catastrophic forgetting' by ensuring we train on a mix
-    of old and new discoveries.
-    """
+class MemorySystem:
     def __init__(self, max_size=1000):
-        self.memory = set() # Use set to avoid duplicates
+        self.active_memory = set()
+        self.inactive_memory = set() # "Hall of Shame"
         self.max_size = max_size
 
-    def add(self, smiles_list: List[str]):
+    def add_active(self, smiles_list: List[str]):
         for sm in smiles_list:
-            self.memory.add(sm)
-            
-        # Prune if too big (randomly remove to keep fresh)
-        while len(self.memory) > self.max_size:
-            self.memory.pop()
+            self.active_memory.add(sm)
+            # If it was previously thought inactive, remove it (correction)
+            if sm in self.inactive_memory:
+                self.inactive_memory.remove(sm)
+        self._prune(self.active_memory)
 
-    def sample(self, sample_size=32) -> List[str]:
-        """Returns a list of SMILES for training"""
-        if len(self.memory) < sample_size:
-            return list(self.memory)
-        return random.sample(list(self.memory), sample_size)
+    def add_inactive(self, smiles_list: List[str]):
+        for sm in smiles_list:
+            # Only add if it's not already known as active
+            if sm not in self.active_memory:
+                self.inactive_memory.add(sm)
+        self._prune(self.inactive_memory)
 
-    def save_buffer(self, path: Path):
-        with open(path / "memory_buffer.smi", "w") as f:
-            for sm in self.memory:
-                f.write(sm + "\n")
+    def _prune(self, memory_set: set):
+        while len(memory_set) > self.max_size:
+            memory_set.pop()
+
+    def get_inactive_fingerprints(self) -> List:
+        """Returns fingerprints of bad molecules to avoid."""
+        fps = []
+        for sm in list(self.inactive_memory)[-200:]: # Look at recent 200 failures
+            mol = Chem.MolFromSmiles(sm)
+            if mol:
+                fps.append(AllChem.GetMorganFingerprintAsBitVect(mol, 2, 2048))
+        return fps
+
+    def sample_active(self, sample_size=32) -> List[str]:
+        if not self.active_memory: return []
+        if len(self.active_memory) < sample_size:
+            return list(self.active_memory)
+        return random.sample(list(self.active_memory), sample_size)
 
 # ==========================================
-# 2. The Main Pipeline Controller
+# 3. Main Pipeline
 # ==========================================
 class MultiAgentPipeline:
-    def __init__(self):
-        # Initialize Agents
-        print("--- Initializing Agents ---")
-        self.gpt = LLM(model_path=None) 
-        self.gpt.load_model(use_lora=True)
+    def __init__(self, n_gpts=2, m_vaes=2):
+        print(f"--- Initializing Fleet: {n_gpts} GPTs, {m_vaes} VAEs ---")
         
-        self.vae = VAE(model_path=None)
-        self.vae.load_model()
+        # 1. Unified Fleet List
+        self.agents = []
         
+        # Initialize N GPTs
+        for i in range(n_gpts):
+            print(f"Loading GPT Agent {i+1}...")
+            agent = LLM(model_path=None)
+            agent.load_model(use_lora=True)
+            self.agents.append({"name": f"GPT_{i+1}", "model": agent, "type": "GPT"})
+
+        # Initialize M VAEs
+        for i in range(m_vaes):
+            print(f"Loading VAE Agent {i+1}...")
+            agent = VAE(model_path=None)
+            agent.load_model()
+            self.agents.append({"name": f"VAE_{i+1}", "model": agent, "type": "VAE"})
+
         self.validator = PropertyAgent()
-        self.memory = ExperienceBuffer(max_size=500)
-        
-        # Configuration
+        self.decision_agent = DecisionMakingAgent(threshold=0.4)
+        self.memory = MemorySystem(max_size=1000)
         self.output_dir = Path("outputs")
         self.output_dir.mkdir(exist_ok=True)
-        self.similarity_threshold = 0.7
 
     def _get_fp(self, smiles):
-        """Helper to get fingerprint quickly"""
         mol = Chem.MolFromSmiles(smiles)
-        if mol:
-            return AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
-        return None
+        return AllChem.GetMorganFingerprintAsBitVect(mol, 2, 2048) if mol else None
 
-    def generate_diverse_batch(self, generator, batch_size, opponent_fps: List, max_retries=3):
+    def generate_smart_batch(self, generator, batch_size, avoid_fps: List):
         """
-        Generates a batch of molecules. If a molecule is too similar to the 'opponent'
-        (the other generator), it rejects it and retries.
+        Same logic as before, but 'avoid_fps' now includes:
+        1. Known Inactive Molecules (History)
+        2. Molecules generated by OTHER agents in this specific round (Peer Pressure)
         """
-        accepted_molecules = []
-        accepted_fps = []
-        
+        accepted_mols = []
         attempts = 0
-        while len(accepted_molecules) < batch_size and attempts < max_retries:
-            # How many do we still need?
-            needed = batch_size - len(accepted_molecules)
-            
-            # Generate a slightly larger batch to account for failures
-            candidates = [generator.generate_molecule(temperature=0.8 + (attempts*0.1)) for _ in range(needed + 2)]
+        max_attempts = batch_size * 5 
+
+        while len(accepted_mols) < batch_size and attempts < max_attempts:
+            needed = batch_size - len(accepted_mols)
+            # Higher temp for later attempts to force exploration
+            temp = 0.8 + (0.05 * (attempts // 10)) 
+            candidates = [generator.generate_molecule(temperature=temp) for _ in range(needed + 2)]
             
             for sm in candidates:
-                if len(accepted_molecules) >= batch_size:
-                    break
-                    
+                if len(accepted_mols) >= batch_size: break
+                
                 fp = self._get_fp(sm)
-                if fp is None: continue # Invalid molecule
-                
-                # CHECK 1: Is it unique within its own batch?
-                # (Optional, but good practice)
-                
-                # CHECK 2: Cross-Communication (Is it too similar to Opponent?)
-                is_too_similar = False
-                if opponent_fps:
-                    # Calculate similarity against ALL opponent fingerprints
-                    sims = DataStructs.BulkTanimotoSimilarity(fp, opponent_fps)
-                    if max(sims) > self.similarity_threshold:
-                        is_too_similar = True
-                
-                if not is_too_similar:
-                    accepted_molecules.append(sm)
-                    accepted_fps.append(fp)
-            
+                if fp is None: continue 
+
+                # UNIFIED CONSTRAINT CHECK
+                # Checks against both Inactive Memory AND Peers simultaneously
+                if avoid_fps:
+                    sims = DataStructs.BulkTanimotoSimilarity(fp, avoid_fps)
+                    if sims and max(sims) > 0.75: # Too similar to *something* we want to avoid
+                        continue 
+
+                accepted_mols.append(sm)
             attempts += 1
-            if len(accepted_molecules) < batch_size:
-                print(f"   > Collision detected. Regenerating {batch_size - len(accepted_molecules)} molecules...")
+        
+        # Fill if failed
+        while len(accepted_mols) < batch_size:
+            accepted_mols.append(generator.generate_molecule())
+            
+        return accepted_mols
 
-        return accepted_molecules
-
-    def run_optimization_loop(self, rounds=5, batch_size=50):
+    def run_optimization_loop(self, rounds=5, batch_size=20):
+        """
+        Batch size is per-agent. Total molecules = (N+M) * batch_size
+        """
         for r in range(rounds):
             print(f"\n=== Round {r+1}/{rounds} ===")
             
-            # --- Step 1: Sequential Generation with Collision Check ---
-            # We let GPT go first (arbitrary choice), then VAE must respect GPT's space
-            print(">> Generators producing molecules...")
+            # --- PHASE 1: SEQUENTIAL GENERATION ---
             
-            # 1. GPT generates freely
-            raw_gpt = [self.gpt.generate_molecule(temperature=0.8) for _ in range(batch_size)]
-            # Calculate GPT fingerprints to pass to VAE
-            gpt_fps = [self._get_fp(sm) for sm in raw_gpt if self._get_fp(sm) is not None]
+            # 1. Load Global Taboos (Inactive History)
+            # These are molecules NO ONE should generate
+            global_avoid_fps = []
+            if r > 0:
+                global_avoid_fps = self.memory.get_inactive_fingerprints()
             
-            # 2. VAE generates, but MUST NOT match GPT (Regeneration Loop)
-            print(">> VAE generating (avoiding GPT collisions)...")
-            raw_vae = self.generate_diverse_batch(self.vae, batch_size, opponent_fps=gpt_fps)
+            # 2. Rolling Generation
+            # This list accumulates fingerprints from Agent 1, then Agent 2...
+            # The next agent must avoid everything in this list.
+            current_round_fps = [] 
+            all_raw_molecules = []
 
-            # 3. (Optional) GPT Double Check 
-            # If you want strict fairness, you could re-check GPT against VAE here, 
-            # but usually one-way check is sufficient for diversity.
-
-            # --- Step 2: Validation ---
-            print(">> Validating scores...")
-            data_gpt = self.validator.evaluate_batch(raw_gpt)
-            data_vae = self.validator.evaluate_batch(raw_vae)
-            
-            # --- Step 3: Decision Making ---
-            # Now we don't need to penalize similarity heavily here because 
-            # we already filtered the worst offenders in Step 1.
-            
-            all_candidates = data_gpt + data_vae
-            round_winners = []
-
-            for item in all_candidates:
-                # Pure quality score now
-                final_score = (item['QED'] * 0.5) + (item['Docking'] * 0.5)
+            for agent_dict in self.agents:
+                name = agent_dict["name"]
+                model = agent_dict["model"]
                 
-                if final_score > 0.4: 
-                    round_winners.append(item['smiles'])
-
-            # --- Step 4: Feedback (Memory + Training) ---
-            print(f">> Feedback: Found {len(round_winners)} active candidates.")
-            
-            # A. Update Memory
-            self.memory.add(round_winners)
-            
-            # B. Train on Experience Buffer (Not just new dataset)
-            # This answers "How do I ensure it generates more such molecules?"
-            if len(self.memory.memory) > 10:
-                print(f">> Improving Generators using Experience Replay (Size: {len(self.memory.memory)})...")
+                # Combine Global Taboos + Peers' Taboos
+                full_avoid_list = global_avoid_fps + current_round_fps
                 
-                # Sample a mix of old and new good molecules
-                training_samples = self.memory.sample(sample_size=32)
+                print(f">> {name} Generating (Avoiding {len(full_avoid_list)} fingerprints)...")
+                
+                # Generate
+                batch = self.generate_smart_batch(model, batch_size, avoid_fps=full_avoid_list)
+                all_raw_molecules.extend(batch)
+                
+                # Update constraints for the NEXT agent
+                # (Next agent cannot copy what I just made)
+                new_fps = [self._get_fp(sm) for sm in batch]
+                current_round_fps.extend([fp for fp in new_fps if fp is not None])
+
+            # --- PHASE 2: VALIDATION & CLASSIFICATION ---
+            print(f">> Validating {len(all_raw_molecules)} total molecules...")
+            
+            active_batch = []
+            inactive_batch = []
+            
+            results = self.validator.evaluate_batch(all_raw_molecules)
+            
+            for item in results:
+                status = self.decision_agent.classify(item)
+                if status == "Active":
+                    active_batch.append(item['smiles'])
+                else:
+                    inactive_batch.append(item['smiles'])
+
+            print(f"   > Result: {len(active_batch)} Active | {len(inactive_batch)} Inactive")
+
+            # --- PHASE 3: MEMORY UPDATE ---
+            self.memory.add_active(active_batch)
+            self.memory.add_inactive(inactive_batch)
+
+            # --- PHASE 4: FEEDBACK (TRAINING THE FLEET) ---
+            if r == 0:
+                print(">> Round 1 Complete. Skipping training.")
+                continue
+
+            if len(self.memory.active_memory) > 5:
+                print(f">> Training Fleet ({len(self.agents)} Agents) on Active Experience...")
+                
+                # Prepare Data ONCE
+                training_roots = self.memory.sample_active(sample_size=10)
+                augmented_data = []
+                for sm in training_roots:
+                    augmented_data.extend(self._randomize_smiles(sm, 20))
                 
                 with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.smi') as tmp:
-                    for sm in training_samples:
+                    for sm in augmented_data:
                         tmp.write(sm + "\n")
                     tmp_path = tmp.name
-
+                
                 try:
-                    # Low learning rate to gently nudge weights
-                    self.gpt.fine_tune(tmp_path, epochs=1, batch_size=4, lr=1e-5)
-                    self.vae.fine_tune(tmp_path, epochs=1, batch_size=8, lr=1e-4)
+                    # Update EVERY agent
+                    # They all learn from the collective success
+                    for agent_dict in self.agents:
+                        print(f"   > Fine-tuning {agent_dict['name']}...")
+                        
+                        # Adjust hyperparameters based on type if needed
+                        if agent_dict["type"] == "GPT":
+                            agent_dict["model"].fine_tune(tmp_path, epochs=1, batch_size=4, lr=2e-5)
+                        else:
+                            agent_dict["model"].fine_tune(tmp_path, epochs=1, batch_size=8, lr=1e-4)
+                            
                 finally:
                     os.remove(tmp_path)
             else:
-                print(">> Memory buffer too small to train yet.")
-
-    def save_final_models(self):
-        print("Saving final models and memory...")
-        self.gpt.model.save_pretrained(self.output_dir / "Final_GPT")
-        torch.save(self.vae.model.state_dict(), self.output_dir / "Final_VAE.pt")
-        self.memory.save_buffer(self.output_dir)
+                print(">> Not enough active molecules yet.")
+    
+    def _randomize_smiles(self, smiles, n):
+        # (Same helper as before)
+        mol = Chem.MolFromSmiles(smiles)
+        if not mol: return []
+        variants = {Chem.MolToSmiles(mol, canonical=True)}
+        for _ in range(n*2):
+            if len(variants) >= n: break
+            variants.add(Chem.MolToSmiles(mol, doRandom=True))
+        return list(variants)
