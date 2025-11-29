@@ -122,7 +122,6 @@ class VAE:
     def load_model(self, vocab_base="gpt2"):
         """
         Initializes the VAE architecture and loads weights if model_path exists.
-        Unlike GPT, we usually need to define the architecture explicitly.
         """
         # 1. Load a standard tokenizer (using GPT2's BPE is fine for SMILES, or a custom one)
         try:
