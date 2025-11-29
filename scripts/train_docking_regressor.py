@@ -358,46 +358,54 @@ def hyperparameter_search(
     best_score = float('inf')
     best_params = None
     results = []
+    temp_dir = Path("models/temp")
+    temp_dir.mkdir(parents=True, exist_ok=True)
     
-    trials = 0
-    for hidden_dim in param_grid['hidden_dim']:
-        for lr in param_grid['lr']:
-            for weight_decay in param_grid['weight_decay']:
-                if trials >= max_trials:
-                    break
-                
-                print(f"\nTrial {trials + 1}/{max_trials}: hidden_dim={hidden_dim}, lr={lr}, weight_decay={weight_decay}")
-                
-                # Quick training (fewer epochs for search)
-                model, train_metrics = train_model(
-                    train_rows, val_rows, input_dim, hidden_dim,
-                    batch_size=64, lr=lr, epochs=10, weight_decay=weight_decay,
-                    patience=3, model_dir="models/temp"
-                )
-                
-                val_metrics = evaluate_model(model, val_rows)
-                val_loss = val_metrics['rmse']  # Use RMSE as selection metric
-                
-                results.append({
-                    'hidden_dim': hidden_dim,
-                    'lr': lr,
-                    'weight_decay': weight_decay,
-                    'val_rmse': val_loss
-                })
-                
-                if val_loss < best_score:
-                    best_score = val_loss
-                    best_params = {'hidden_dim': hidden_dim, 'lr': lr, 'weight_decay': weight_decay}
-                
-                trials += 1
+    try:
+        trials = 0
+        for hidden_dim in param_grid['hidden_dim']:
+            for lr in param_grid['lr']:
+                for weight_decay in param_grid['weight_decay']:
+                    if trials >= max_trials:
+                        break
+                    
+                    print(f"\nTrial {trials + 1}/{max_trials}: hidden_dim={hidden_dim}, lr={lr}, weight_decay={weight_decay}")
+                    
+                    # Quick training (fewer epochs for search)
+                    model, train_metrics = train_model(
+                        train_rows, val_rows, input_dim, hidden_dim,
+                        batch_size=64, lr=lr, epochs=10, weight_decay=weight_decay,
+                        patience=3, model_dir=str(temp_dir)
+                    )
+                    
+                    val_metrics = evaluate_model(model, val_rows)
+                    val_loss = val_metrics['rmse']  # Use RMSE as selection metric
+                    
+                    results.append({
+                        'hidden_dim': hidden_dim,
+                        'lr': lr,
+                        'weight_decay': weight_decay,
+                        'val_rmse': val_loss
+                    })
+                    
+                    if val_loss < best_score:
+                        best_score = val_loss
+                        best_params = {'hidden_dim': hidden_dim, 'lr': lr, 'weight_decay': weight_decay}
+                    
+                    trials += 1
+                    if trials >= max_trials:
+                        break
                 if trials >= max_trials:
                     break
             if trials >= max_trials:
                 break
-        if trials >= max_trials:
-            break
-    
-    print(f"\nBest hyperparameters: {best_params} (val_rmse={best_score:.4f})")
+        
+        print(f"\nBest hyperparameters: {best_params} (val_rmse={best_score:.4f})")
+    finally:
+        # Cleanup temp directory
+        if temp_dir.exists():
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
     
     return {'best_params': best_params, 'all_results': results}
 
