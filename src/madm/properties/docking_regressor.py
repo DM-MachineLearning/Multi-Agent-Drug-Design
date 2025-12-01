@@ -3,30 +3,49 @@ import torch.nn as nn
 import numpy as np
 
 class DockingRegressor(nn.Module):
-    """ECFP -> predicted docking score (regression)."""
+    """ECFP -> predicted docking score (regression).
 
-    def __init__(self, input_dim: int = 2048, hidden_dim: int = 512, dropout: float = 0.0):
+    The network is a configurable MLP with `num_layers` hidden layers of size
+    `hidden_dim` by default. With the default `num_layers=2`, this reproduces
+    the original architecture:
+
+        input_dim -> hidden_dim -> hidden_dim -> 1
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 2048,
+        hidden_dim: int = 512,
+        dropout: float = 0.0,
+        num_layers: int = 2,
+    ):
         super().__init__()
-        layers = [
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-        ]
+
+        if num_layers < 1:
+            raise ValueError("num_layers must be >= 1")
+
+        layers = []
+
+        # First hidden layer
+        layers.append(nn.Linear(input_dim, hidden_dim))
+        layers.append(nn.ReLU())
         if dropout > 0:
             layers.append(nn.Dropout(dropout))
-        
-        layers.extend([
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-        ])
-        
-        if dropout > 0:
-            layers.append(nn.Dropout(dropout))
-        
+
+        # Additional hidden layers (if any)
+        for _ in range(num_layers - 1):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+
+        # Output layer
         layers.append(nn.Linear(hidden_dim, 1))
-        
+
         self.net = nn.Sequential(*layers)
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
 
     def forward(self, x):
         return self.net(x).squeeze(-1)
@@ -57,7 +76,15 @@ class DockingRegressor(nn.Module):
         torch.save(self.state_dict(), path)
     
     @classmethod
-    def load_state(cls, path: str, map_location: str = 'cpu', input_dim: int = 2048, hidden_dim: int = 512, dropout: float = 0.0):
+    def load_state(
+        cls,
+        path: str,
+        map_location: str = 'cpu',
+        input_dim: int = 2048,
+        hidden_dim: int = 512,
+        dropout: float = 0.0,
+        num_layers: int = 2,
+    ):
         """Load model state dict from file.
         
         Args:
@@ -66,10 +93,16 @@ class DockingRegressor(nn.Module):
             input_dim: Input dimension (must match saved model)
             hidden_dim: Hidden dimension (must match saved model)
             dropout: Dropout rate (must match saved model)
+            num_layers: Number of hidden layers (must match saved model)
             
         Returns:
             DockingRegressor instance with loaded weights
         """
-        model = cls(input_dim=input_dim, hidden_dim=hidden_dim, dropout=dropout)
+        model = cls(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            dropout=dropout,
+            num_layers=num_layers,
+        )
         model.load_state_dict(torch.load(path, map_location=map_location))
         return model

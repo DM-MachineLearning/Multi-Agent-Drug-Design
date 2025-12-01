@@ -15,6 +15,11 @@ from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from scipy.stats import pearsonr
+import matplotlib
+
+# Use non-interactive backend for plotting
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from madm.properties import DockingRegressor
 from madm.data.featurization import smiles_to_ecfp
@@ -200,6 +205,10 @@ def train_model(
     model_dir: str = "models"
 ) -> Tuple[DockingRegressor, Dict]:
     """Train the docking regressor model."""
+    # Device selection
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     # Create datasets
     train_dataset = DockingDataset(train_rows)
     val_dataset = DockingDataset(val_rows)
@@ -208,10 +217,10 @@ def train_model(
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     # Initialize model
-    model = DockingRegressor(input_dim=input_dim, hidden_dim=hidden_dim, dropout=dropout)
+    model = DockingRegressor(input_dim=input_dim, hidden_dim=hidden_dim, dropout=dropout).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=3, verbose=True
+        optimizer, mode='min', factor=0.5, patience=3
     )
     loss_fn = torch.nn.MSELoss()
     
@@ -229,6 +238,8 @@ def train_model(
         model.train()
         train_loss = 0.0
         for fps, y_true in train_loader:
+            fps = fps.to(device=device, dtype=torch.float32)
+            y_true = y_true.to(device=device, dtype=torch.float32)
             y_pred = model(fps)
             loss = loss_fn(y_pred, y_true)
             optimizer.zero_grad()
@@ -242,6 +253,8 @@ def train_model(
         val_loss = 0.0
         with torch.no_grad():
             for fps, y_true in val_loader:
+                fps = fps.to(device=device, dtype=torch.float32)
+                y_true = y_true.to(device=device, dtype=torch.float32)
                 y_pred = model(fps)
                 loss = loss_fn(y_pred, y_true)
                 val_loss += float(loss.item()) * len(fps)
@@ -274,33 +287,53 @@ def train_model(
     # Load best model
     model_path = model_dir_path / "docking_regressor.pt"
     model = DockingRegressor.load_state(
-        str(model_path), map_location='cpu', input_dim=input_dim, hidden_dim=hidden_dim, dropout=dropout
-    )
+        str(model_path),
+        map_location=str(device),
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        dropout=dropout,
+    ).to(device)
     
     print(f"\nBest model from epoch {best_epoch} (val_loss={best_val_loss:.4f})")
     
     return model, {'history': metrics_history, 'best_epoch': best_epoch, 'best_val_loss': best_val_loss}
 
 
-def evaluate_model(model: DockingRegressor, test_rows: List[Dict], batch_size: int = 64) -> Dict[str, float]:
-    """Evaluate model on test set."""
+def evaluate_model(
+    model: DockingRegressor,
+    test_rows: List[Dict],
+    batch_size: int = 64,
+    return_preds: bool = False,
+) -> Dict[str, float]:
+    """Evaluate model on test set.
+
+    If return_preds is True, also returns y_true and y_pred arrays.
+    """
     test_dataset = DockingDataset(test_rows)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-    
+
+    # Infer device from model parameters
+    device = next(model.parameters()).device
+
     model.eval()
     all_preds = []
     all_targets = []
     
     with torch.no_grad():
         for fps, y_true in test_loader:
+            fps = fps.to(device=device, dtype=torch.float32)
+            y_true = y_true.to(device=device, dtype=torch.float32)
             y_pred = model.predict_batch(fps)
             all_preds.extend(y_pred)
-            all_targets.extend(y_true.numpy())
+            all_targets.extend(y_true.cpu().numpy())
     
-    all_preds = np.array(all_preds)
-    all_targets = np.array(all_targets)
+    all_preds = np.array(all_preds, dtype=np.float32)
+    all_targets = np.array(all_targets, dtype=np.float32)
     
-    return compute_metrics(all_targets, all_preds)
+    metrics = compute_metrics(all_targets, all_preds)
+    if return_preds:
+        return metrics, all_targets, all_preds
+    return metrics
 
 
 def run_baselines(train_rows: List[Dict], val_rows: List[Dict], test_rows: List[Dict]) -> Dict:
@@ -344,70 +377,111 @@ def hyperparameter_search(
     train_rows: List[Dict],
     val_rows: List[Dict],
     input_dim: int,
-    max_trials: int = 8
+    max_trials: int = 10,
 ) -> Dict:
-    """Simple grid search for hyperparameters."""
+    """Randomized grid search for hyperparameters.
+
+    Selection metric: highest validation R², with lowest validation MSE as tie-breaker.
+    """
     print("\nRunning hyperparameter search...")
-    
-    param_grid = {
-        'hidden_dim': [256, 512],
-        'lr': [1e-3, 1e-4],
-        'weight_decay': [0, 1e-4]
-    }
-    
-    best_score = float('inf')
+
+    # Full grid as requested
+    grid_hidden_dim = [256, 512, 768]
+    grid_lr = [1e-2, 1e-3, 5e-4, 1e-4]
+    grid_dropout = [0.0, 0.1, 0.2]
+    grid_weight_decay = [0.0, 1e-5, 1e-4]
+
+    param_grid = []
+    for h in grid_hidden_dim:
+        for lr in grid_lr:
+            for d in grid_dropout:
+                for wd in grid_weight_decay:
+                    param_grid.append(
+                        {
+                            "hidden_dim": h,
+                            "lr": lr,
+                            "dropout": d,
+                            "weight_decay": wd,
+                        }
+                    )
+
+    # Randomly sample up to max_trials combinations for runtime control
+    rng = np.random.default_rng(seed=42)
+    indices = np.arange(len(param_grid))
+    rng.shuffle(indices)
+    indices = indices[: max_trials]
+
     best_params = None
+    best_r2 = -np.inf
+    best_mse = np.inf
     results = []
     temp_dir = Path("models/temp")
     temp_dir.mkdir(parents=True, exist_ok=True)
-    
+
     try:
-        trials = 0
-        for hidden_dim in param_grid['hidden_dim']:
-            for lr in param_grid['lr']:
-                for weight_decay in param_grid['weight_decay']:
-                    if trials >= max_trials:
-                        break
-                    
-                    print(f"\nTrial {trials + 1}/{max_trials}: hidden_dim={hidden_dim}, lr={lr}, weight_decay={weight_decay}")
-                    
-                    # Quick training (fewer epochs for search)
-                    model, train_metrics = train_model(
-                        train_rows, val_rows, input_dim, hidden_dim,
-                        batch_size=64, lr=lr, epochs=10, weight_decay=weight_decay,
-                        patience=3, model_dir=str(temp_dir)
-                    )
-                    
-                    val_metrics = evaluate_model(model, val_rows)
-                    val_loss = val_metrics['rmse']  # Use RMSE as selection metric
-                    
-                    results.append({
-                        'hidden_dim': hidden_dim,
-                        'lr': lr,
-                        'weight_decay': weight_decay,
-                        'val_rmse': val_loss
-                    })
-                    
-                    if val_loss < best_score:
-                        best_score = val_loss
-                        best_params = {'hidden_dim': hidden_dim, 'lr': lr, 'weight_decay': weight_decay}
-                    
-                    trials += 1
-                    if trials >= max_trials:
-                        break
-                if trials >= max_trials:
-                    break
-            if trials >= max_trials:
-                break
-        
-        print(f"\nBest hyperparameters: {best_params} (val_rmse={best_score:.4f})")
+        for trial_idx, grid_idx in enumerate(indices, start=1):
+            params = param_grid[grid_idx]
+            hidden_dim = params["hidden_dim"]
+            lr = params["lr"]
+            dropout = params["dropout"]
+            weight_decay = params["weight_decay"]
+
+            print(
+                f"\nTrial {trial_idx}/{len(indices)}: "
+                f"hidden_dim={hidden_dim}, lr={lr}, dropout={dropout}, weight_decay={weight_decay}"
+            )
+
+            # Quick training (fewer epochs for search)
+            model, _ = train_model(
+                train_rows,
+                val_rows,
+                input_dim,
+                hidden_dim,
+                batch_size=64,
+                lr=lr,
+                epochs=15,
+                weight_decay=weight_decay,
+                dropout=dropout,
+                patience=5,
+                model_dir=str(temp_dir),
+            )
+
+            val_metrics = evaluate_model(model, val_rows, batch_size=64)
+            r2 = val_metrics["r2"]
+            mse = val_metrics["rmse"] ** 2
+
+            results.append(
+                {
+                    "hidden_dim": hidden_dim,
+                    "lr": lr,
+                    "dropout": dropout,
+                    "weight_decay": weight_decay,
+                    "val_r2": r2,
+                    "val_rmse": val_metrics["rmse"],
+                    "val_mae": val_metrics["mae"],
+                }
+            )
+
+            # Higher R² is better; break ties with lower MSE
+            if (r2 > best_r2) or (np.isclose(r2, best_r2) and mse < best_mse):
+                best_r2 = r2
+                best_mse = mse
+                best_params = params
+
+        if best_params is not None:
+            print(
+                f"\nBest hyperparameters: {best_params} "
+                f"(val_r2={best_r2:.4f}, val_mse={best_mse:.4f})"
+            )
+        else:
+            print("\nNo successful hyperparameter trials completed.")
     finally:
         # Cleanup temp directory
         if temp_dir.exists():
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
-    
-    return {'best_params': best_params, 'all_results': results}
+
+    return {"best_params": best_params, "all_results": results}
 
 
 def main():
@@ -476,22 +550,42 @@ def main():
         input_dim = len(train_rows[0]['fp'])
         print(f"Detected input_dim: {input_dim}")
         
+        # Directory setup for reports
+        reports_dir = Path("reports") / "docking"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
         # Hyperparameter search (optional)
+        best_hp = None
+        hp_results = None
         if not args.no_hyperopt:
-            hp_results = hyperparameter_search(train_rows, val_rows, input_dim, max_trials=8)
+            hp_results = hyperparameter_search(train_rows, val_rows, input_dim, max_trials=10)
+            best_hp = hp_results.get("best_params")
             # Use best hyperparameters
-            if hp_results['best_params']:
-                args.hidden_dim = hp_results['best_params']['hidden_dim']
-                args.lr = hp_results['best_params']['lr']
-                args.weight_decay = hp_results['best_params']['weight_decay']
-                print(f"\nUsing best hyperparameters: hidden_dim={args.hidden_dim}, lr={args.lr}, weight_decay={args.weight_decay}")
+            if best_hp:
+                args.hidden_dim = best_hp["hidden_dim"]
+                args.lr = best_hp["lr"]
+                args.weight_decay = best_hp["weight_decay"]
+                args.dropout = best_hp["dropout"]
+                print(
+                    "\nUsing best hyperparameters: "
+                    f"hidden_dim={args.hidden_dim}, lr={args.lr}, "
+                    f"dropout={args.dropout}, weight_decay={args.weight_decay}"
+                )
         
-        # Train model
+        # Retrain on combined train+val with chosen hyperparameters
+        train_full_rows = train_rows + val_rows
+        print(f"\nRetraining on combined train+val set (n={len(train_full_rows)}) with best hyperparameters...")
         model, train_metrics = train_model(
-            train_rows, val_rows, input_dim, args.hidden_dim,
-            batch_size=args.batch_size, lr=args.lr, epochs=args.epochs,
-            weight_decay=args.weight_decay, dropout=args.dropout,
-            model_dir=Path(args.out).parent
+            train_full_rows,
+            val_rows,  # still keep a small validation set for early stopping
+            input_dim,
+            args.hidden_dim,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            epochs=args.epochs,
+            weight_decay=args.weight_decay,
+            dropout=args.dropout,
+            model_dir=Path(args.out).parent,
         )
         
         # Save final model to specified path
@@ -503,9 +597,28 @@ def main():
         with open(metrics_path, 'w') as f:
             json.dump(train_metrics, f, indent=2)
         print(f"Training metrics saved to {metrics_path}")
+
+        # Save hyperparameters
+        hparams = {
+            "input_dim": input_dim,
+            "hidden_dim": args.hidden_dim,
+            "lr": args.lr,
+            "dropout": args.dropout,
+            "weight_decay": args.weight_decay,
+            "batch_size": args.batch_size,
+            "epochs": args.epochs,
+            "seed": args.seed,
+            "best_search_results": hp_results,
+        }
+        hparams_path = Path("hparams_docking.json")
+        with open(hparams_path, "w") as f:
+            json.dump(hparams, f, indent=2)
+        print(f"Hyperparameters saved to {hparams_path}")
         
-        # Evaluate on test set
-        test_metrics = evaluate_model(model, test_rows, batch_size=args.batch_size)
+        # Evaluate on test set (also get predictions for diagnostics)
+        test_metrics, y_true_test, y_pred_test = evaluate_model(
+            model, test_rows, batch_size=args.batch_size, return_preds=True
+        )
         
         print("\nTest Metrics:")
         for key, value in test_metrics.items():
@@ -516,6 +629,92 @@ def main():
         with open(test_metrics_path, 'w') as f:
             json.dump(test_metrics, f, indent=2)
         print(f"Test metrics saved to {test_metrics_path}")
+
+        # Diagnostics: loss vs epoch plot
+        history = train_metrics.get("history", [])
+        if history:
+            epochs_hist = [h["epoch"] for h in history]
+            train_loss_hist = [h["train_loss"] for h in history]
+            val_loss_hist = [h["val_loss"] for h in history]
+
+            plt.figure(figsize=(6, 4))
+            plt.plot(epochs_hist, train_loss_hist, label="Train Loss")
+            plt.plot(epochs_hist, val_loss_hist, label="Val Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("MSE Loss")
+            plt.title("Docking Regressor Training Curve")
+            plt.legend()
+            plt.tight_layout()
+            loss_plot_path = reports_dir / "loss_curve.png"
+            plt.savefig(loss_plot_path, dpi=200)
+            plt.close()
+            print(f"Loss curve saved to {loss_plot_path}")
+
+        # Diagnostics: predicted vs actual scatter plot
+        plt.figure(figsize=(5, 5))
+        plt.scatter(y_true_test, y_pred_test, alpha=0.6, edgecolor="k")
+        min_val = float(min(y_true_test.min(), y_pred_test.min()))
+        max_val = float(max(y_true_test.max(), y_pred_test.max()))
+        plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Ideal")
+        plt.xlabel("Actual DockScore")
+        plt.ylabel("Predicted DockScore")
+        plt.title("Docking Regressor: Predicted vs Actual (Test)")
+        plt.legend()
+        plt.tight_layout()
+        scatter_plot_path = reports_dir / "pred_vs_actual_test.png"
+        plt.savefig(scatter_plot_path, dpi=200)
+        plt.close()
+        print(f"Predicted vs actual scatter plot saved to {scatter_plot_path}")
+
+        # Generate concise markdown training report
+        report_path = reports_dir / "training_report.md"
+        with open(report_path, "w") as f:
+            f.write("# Docking Regressor Training Report\n\n")
+            f.write("## Hyperparameters\n\n")
+            for k, v in hparams.items():
+                f.write(f"- **{k}**: {v}\n")
+
+            f.write("\n## Test Set Metrics\n\n")
+            for k, v in test_metrics.items():
+                f.write(f"- **{k}**: {v:.4f}\n")
+
+            f.write("\n## Artifacts\n\n")
+            f.write(f"- **Model**: `{args.out}`\n")
+            f.write(f"- **Training metrics**: `{metrics_path}`\n")
+            f.write(f"- **Test metrics**: `{test_metrics_path}`\n")
+            f.write(f"- **Hyperparameters**: `{hparams_path}`\n")
+            f.write(f"- **Loss curve plot**: `{loss_plot_path}`\n")
+            f.write(f"- **Pred vs actual plot**: `{scatter_plot_path}`\n")
+
+            f.write("\n## Recommendations\n\n")
+            f.write(
+                "- **Data**: Consider expanding the dataset and checking for label noise in `DockScore`.\n"
+            )
+            f.write(
+                "- **Modeling**: Try deeper or residual MLPs, or compare against gradient-boosted trees on ECFP.\n"
+            )
+            f.write(
+                "- **Features**: Explore 3D or protein–ligand features (e.g., graph neural networks) if performance plateaus.\n"
+            )
+
+        print(f"Training report written to {report_path}")
+
+        # Final clean summary for console
+        print("\n=== Final Summary ===")
+        print("Best hyperparameters:")
+        print(
+            f"  hidden_dim={args.hidden_dim}, lr={args.lr}, "
+            f"dropout={args.dropout}, weight_decay={args.weight_decay}"
+        )
+        print("\nTest metrics:")
+        print(
+            f"  R2={test_metrics['r2']:.4f}, "
+            f"RMSE={test_metrics['rmse']:.4f}, "
+            f"MAE={test_metrics['mae']:.4f}, "
+            f"Pearson r={test_metrics['pearson_r']:.4f}"
+        )
+        print(f"\nModel path: {args.out}")
+        print("For further improvements, see recommendations section of the training report.")
         
         # Run baselines (optional)
         if not args.no_baselines:
