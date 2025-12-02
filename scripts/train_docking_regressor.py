@@ -4,7 +4,7 @@ import json
 import os
 import random
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,11 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from scipy.stats import pearsonr
 import matplotlib
+
+try:
+    import optuna
+except ImportError:  # Optuna is optional; only required when --use-optuna is set
+    optuna = None
 
 # Use non-interactive backend for plotting
 matplotlib.use("Agg")
@@ -202,7 +207,8 @@ def train_model(
     weight_decay: float = 0.0,
     dropout: float = 0.0,
     patience: int = 5,
-    model_dir: str = "models"
+    model_dir: str = "models",
+    trial: Optional["optuna.trial.Trial"] = None,
 ) -> Tuple[DockingRegressor, Dict]:
     """Train the docking regressor model."""
     # Device selection
@@ -259,7 +265,17 @@ def train_model(
                 loss = loss_fn(y_pred, y_true)
                 val_loss += float(loss.item()) * len(fps)
         val_loss /= len(val_dataset)
-        
+
+        # Report to Optuna and support pruning if a trial is provided
+        if trial is not None and optuna is not None:
+            trial.report(val_loss, step=epoch)
+            if trial.should_prune():
+                print(
+                    f"  -> Trial {trial.number} pruned at epoch {epoch} "
+                    f"(val_loss={val_loss:.4f})"
+                )
+                raise optuna.exceptions.TrialPruned()
+
         scheduler.step(val_loss)
         
         metrics_history.append({
@@ -498,9 +514,17 @@ def main():
     parser.add_argument('--weight-decay', type=float, default=0.0, help='Weight decay')
     parser.add_argument('--dropout', type=float, default=0.0, help='Dropout rate')
     parser.add_argument('--no-baselines', action='store_true', help='Skip baseline models')
-    parser.add_argument('--no-hyperopt', action='store_true', help='Skip hyperparameter search')
+    parser.add_argument('--no-hyperopt', action='store_true', help='Skip manual hyperparameter search (v1)')
+    parser.add_argument('--use-optuna', action='store_true', help='Use Optuna-based hyperparameter optimization instead of manual search')
+    parser.add_argument('--optuna-trials', type=int, default=50, help='Number of Optuna trials to run')
+    parser.add_argument('--optuna-storage', type=str, default='', help='Optuna storage URL (e.g. "sqlite:///optuna_docking.db"); empty for in-memory')
     
     args = parser.parse_args()
+
+    # Avoid accidentally overwriting the original v1 model when using Optuna
+    default_out_path = 'models/docking_regressor.pt'
+    if args.use_optuna and args.out == default_out_path:
+        args.out = 'models/docking_regressor_optuna.pt'
     
     # Set random seeds
     random.seed(args.seed)
@@ -545,191 +569,514 @@ def main():
         # Training mode
         print("Training mode")
         train_rows, val_rows, test_rows = prepare_data(df, target_col, seed=args.seed)
-        
+
         # Detect input_dim from first fingerprint
         input_dim = len(train_rows[0]['fp'])
         print(f"Detected input_dim: {input_dim}")
-        
+
         # Directory setup for reports
         reports_dir = Path("reports") / "docking"
         reports_dir.mkdir(parents=True, exist_ok=True)
 
-        # Hyperparameter search (optional)
-        best_hp = None
-        hp_results = None
-        if not args.no_hyperopt:
-            hp_results = hyperparameter_search(train_rows, val_rows, input_dim, max_trials=10)
-            best_hp = hp_results.get("best_params")
-            # Use best hyperparameters
-            if best_hp:
-                args.hidden_dim = best_hp["hidden_dim"]
-                args.lr = best_hp["lr"]
-                args.weight_decay = best_hp["weight_decay"]
-                args.dropout = best_hp["dropout"]
-                print(
-                    "\nUsing best hyperparameters: "
-                    f"hidden_dim={args.hidden_dim}, lr={args.lr}, "
-                    f"dropout={args.dropout}, weight_decay={args.weight_decay}"
+        if args.use_optuna:
+            # --- Optuna-based hyperparameter optimization path (v2) ---
+            if optuna is None:
+                raise SystemExit(
+                    "Optuna is not installed but --use-optuna was specified.\n"
+                    "Please install Optuna with: pip install optuna"
                 )
-        
-        # Retrain on combined train+val with chosen hyperparameters
-        train_full_rows = train_rows + val_rows
-        print(f"\nRetraining on combined train+val set (n={len(train_full_rows)}) with best hyperparameters...")
-        model, train_metrics = train_model(
-            train_full_rows,
-            val_rows,  # still keep a small validation set for early stopping
-            input_dim,
-            args.hidden_dim,
-            batch_size=args.batch_size,
-            lr=args.lr,
-            epochs=args.epochs,
-            weight_decay=args.weight_decay,
-            dropout=args.dropout,
-            model_dir=Path(args.out).parent,
-        )
-        
-        # Save final model to specified path
-        model.save_state(args.out)
-        print(f"\nModel saved to {args.out}")
-        
-        # Save training metrics
-        metrics_path = Path("docking_metrics.json")
-        with open(metrics_path, 'w') as f:
-            json.dump(train_metrics, f, indent=2)
-        print(f"Training metrics saved to {metrics_path}")
 
-        # Save hyperparameters
-        hparams = {
-            "input_dim": input_dim,
-            "hidden_dim": args.hidden_dim,
-            "lr": args.lr,
-            "dropout": args.dropout,
-            "weight_decay": args.weight_decay,
-            "batch_size": args.batch_size,
-            "epochs": args.epochs,
-            "seed": args.seed,
-            "best_search_results": hp_results,
-        }
-        hparams_path = Path("hparams_docking.json")
-        with open(hparams_path, "w") as f:
-            json.dump(hparams, f, indent=2)
-        print(f"Hyperparameters saved to {hparams_path}")
-        
-        # Evaluate on test set (also get predictions for diagnostics)
-        test_metrics, y_true_test, y_pred_test = evaluate_model(
-            model, test_rows, batch_size=args.batch_size, return_preds=True
-        )
-        
-        print("\nTest Metrics:")
-        for key, value in test_metrics.items():
-            print(f"  {key}: {value:.4f}")
-        
-        # Save test metrics
-        test_metrics_path = Path("docking_test_metrics.json")
-        with open(test_metrics_path, 'w') as f:
-            json.dump(test_metrics, f, indent=2)
-        print(f"Test metrics saved to {test_metrics_path}")
+            print("\nUsing Optuna for hyperparameter optimization")
 
-        # Diagnostics: loss vs epoch plot
-        history = train_metrics.get("history", [])
-        if history:
-            epochs_hist = [h["epoch"] for h in history]
-            train_loss_hist = [h["train_loss"] for h in history]
-            val_loss_hist = [h["val_loss"] for h in history]
+            # Temporary directory for trial models
+            temp_dir = Path("models") / "temp_optuna"
+            temp_dir.mkdir(parents=True, exist_ok=True)
 
-            plt.figure(figsize=(6, 4))
-            plt.plot(epochs_hist, train_loss_hist, label="Train Loss")
-            plt.plot(epochs_hist, val_loss_hist, label="Val Loss")
-            plt.xlabel("Epoch")
-            plt.ylabel("MSE Loss")
-            plt.title("Docking Regressor Training Curve")
+            def objective(trial: "optuna.trial.Trial") -> float:
+                # Define search space
+                hidden_dim = trial.suggest_int("hidden_dim", 256, 1024, step=256)
+                lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+                dropout = trial.suggest_float("dropout", 0.0, 0.3)
+                weight_decay = trial.suggest_float(
+                    "weight_decay", 1e-6, 1e-3, log=True
+                )
+
+                print(
+                    f"\n[Optuna] Trial {trial.number}: "
+                    f"hidden_dim={hidden_dim}, lr={lr:.5f}, "
+                    f"dropout={dropout:.3f}, weight_decay={weight_decay:.6f}"
+                )
+
+                # Limit epochs per trial to keep search efficient
+                trial_epochs = min(args.epochs, 50)
+
+                try:
+                    model, train_info = train_model(
+                        train_rows,
+                        val_rows,
+                        input_dim,
+                        hidden_dim,
+                        batch_size=args.batch_size,
+                        lr=lr,
+                        epochs=trial_epochs,
+                        weight_decay=weight_decay,
+                        dropout=dropout,
+                        patience=5,
+                        model_dir=str(temp_dir),
+                        trial=trial,
+                    )
+                except optuna.exceptions.TrialPruned:
+                    # Let Optuna handle the pruning logic
+                    raise
+
+                # Use the best validation loss observed during this trial
+                best_val_loss = float(train_info.get("best_val_loss", np.inf))
+
+                # Optional: also log validation R2 for debugging
+                val_metrics = evaluate_model(
+                    model, val_rows, batch_size=args.batch_size
+                )
+                print(
+                    f"[Optuna] Trial {trial.number} finished: "
+                    f"best_val_loss={best_val_loss:.4f}, "
+                    f"val_r2={val_metrics['r2']:.4f}"
+                )
+
+                return best_val_loss
+
+            # Create Optuna study with TPE sampler and pruning
+            sampler = optuna.samplers.TPESampler(seed=args.seed)
+            pruner = optuna.pruners.MedianPruner(n_warmup_steps=5)
+
+            if args.optuna_storage:
+                study = optuna.create_study(
+                    study_name="docking_regressor_optuna",
+                    direction="minimize",
+                    sampler=sampler,
+                    pruner=pruner,
+                    storage=args.optuna_storage,
+                    load_if_exists=True,
+                )
+            else:
+                study = optuna.create_study(
+                    study_name="docking_regressor_optuna",
+                    direction="minimize",
+                    sampler=sampler,
+                    pruner=pruner,
+                )
+
+            print(
+                f"\nStarting Optuna optimization with {args.optuna_trials} trials "
+                f"(storage={'in-memory' if not args.optuna_storage else args.optuna_storage})"
+            )
+
+            try:
+                study.optimize(objective, n_trials=args.optuna_trials)
+            finally:
+                # Cleanup temporary models
+                if temp_dir.exists():
+                    import shutil
+
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
+            print("\nOptuna optimization finished.")
+            print(f"  Best objective (val_loss): {study.best_value:.6f}")
+            print(f"  Best hyperparameters: {study.best_params}")
+
+            # Save best parameters and all trials
+            hparams_optuna = {
+                "input_dim": input_dim,
+                "best_params": study.best_params,
+                "best_value": float(study.best_value),
+                "direction": study.direction.name,
+                "n_trials": len(study.trials),
+                "sampler": "TPESampler",
+                "pruner": "MedianPruner(n_warmup_steps=5)",
+                "seed": args.seed,
+            }
+            hparams_optuna_path = Path("hparams_docking_optuna.json")
+            with open(hparams_optuna_path, "w") as f:
+                json.dump(hparams_optuna, f, indent=2)
+            print(f"Optuna best hyperparameters saved to {hparams_optuna_path}")
+
+            trials_summary = []
+            for t in study.trials:
+                trials_summary.append(
+                    {
+                        "number": t.number,
+                        "state": str(t.state),
+                        "value": float(t.value) if t.value is not None else None,
+                        "params": t.params,
+                    }
+                )
+            trials_path = Path("optuna_trials_docking.json")
+            with open(trials_path, "w") as f:
+                json.dump(trials_summary, f, indent=2)
+            print(f"Optuna trials summary saved to {trials_path}")
+
+            # Retrain on combined train+val with best hyperparameters
+            best_params = study.best_params
+            best_hidden_dim = int(best_params["hidden_dim"])
+            best_lr = float(best_params["lr"])
+            best_dropout = float(best_params["dropout"])
+            best_weight_decay = float(best_params["weight_decay"])
+
+            train_full_rows = train_rows + val_rows
+            print(
+                f"\nRetraining on combined train+val set (n={len(train_full_rows)}) "
+                "with Optuna-selected hyperparameters..."
+            )
+            model, train_metrics = train_model(
+                train_full_rows,
+                val_rows,  # keep a small validation set for early stopping
+                input_dim,
+                best_hidden_dim,
+                batch_size=args.batch_size,
+                lr=best_lr,
+                epochs=args.epochs,
+                weight_decay=best_weight_decay,
+                dropout=best_dropout,
+                model_dir=Path(args.out).parent,
+            )
+
+            # Save final model and training metrics for Optuna run
+            model.save_state(args.out)
+            print(f"\n[Optuna] Final model saved to {args.out}")
+
+            metrics_path = Path("docking_metrics_optuna.json")
+            with open(metrics_path, "w") as f:
+                json.dump(train_metrics, f, indent=2)
+            print(f"[Optuna] Training metrics saved to {metrics_path}")
+
+            # Save combined hyperparameters used for final training
+            final_hparams = {
+                "input_dim": input_dim,
+                "hidden_dim": best_hidden_dim,
+                "lr": best_lr,
+                "dropout": best_dropout,
+                "weight_decay": best_weight_decay,
+                "batch_size": args.batch_size,
+                "epochs": args.epochs,
+                "seed": args.seed,
+                "optuna": {
+                    "storage": args.optuna_storage or "in-memory",
+                    "n_trials": args.optuna_trials,
+                    "sampler": "TPESampler",
+                    "pruner": "MedianPruner(n_warmup_steps=5)",
+                },
+            }
+            final_hparams_path = Path("hparams_docking_optuna.json")
+            with open(final_hparams_path, "w") as f:
+                json.dump(final_hparams, f, indent=2)
+            print(f"[Optuna] Final training hyperparameters saved to {final_hparams_path}")
+
+            # Evaluate on test set (also get predictions for diagnostics)
+            test_metrics, y_true_test, y_pred_test = evaluate_model(
+                model, test_rows, batch_size=args.batch_size, return_preds=True
+            )
+
+            print("\n[Optuna] Test Metrics:")
+            for key, value in test_metrics.items():
+                print(f"  {key}: {value:.4f}")
+
+            # Save test metrics
+            test_metrics_path = Path("docking_test_metrics_optuna.json")
+            with open(test_metrics_path, "w") as f:
+                json.dump(test_metrics, f, indent=2)
+            print(f"[Optuna] Test metrics saved to {test_metrics_path}")
+
+            # Diagnostics: loss vs epoch plot
+            history = train_metrics.get("history", [])
+            if history:
+                epochs_hist = [h["epoch"] for h in history]
+                train_loss_hist = [h["train_loss"] for h in history]
+                val_loss_hist = [h["val_loss"] for h in history]
+
+                plt.figure(figsize=(6, 4))
+                plt.plot(epochs_hist, train_loss_hist, label="Train Loss")
+                plt.plot(epochs_hist, val_loss_hist, label="Val Loss")
+                plt.xlabel("Epoch")
+                plt.ylabel("MSE Loss")
+                plt.title("Docking Regressor Training Curve (Optuna)")
+                plt.legend()
+                plt.tight_layout()
+                loss_plot_path = reports_dir / "loss_curve_optuna.png"
+                plt.savefig(loss_plot_path, dpi=200)
+                plt.close()
+                print(f"[Optuna] Loss curve saved to {loss_plot_path}")
+
+            # Diagnostics: predicted vs actual scatter plot
+            plt.figure(figsize=(5, 5))
+            plt.scatter(y_true_test, y_pred_test, alpha=0.6, edgecolor="k")
+            min_val = float(min(y_true_test.min(), y_pred_test.min()))
+            max_val = float(max(y_true_test.max(), y_pred_test.max()))
+            plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Ideal")
+            plt.xlabel("Actual DockScore")
+            plt.ylabel("Predicted DockScore")
+            plt.title("Docking Regressor (Optuna): Predicted vs Actual (Test)")
             plt.legend()
             plt.tight_layout()
-            loss_plot_path = reports_dir / "loss_curve.png"
-            plt.savefig(loss_plot_path, dpi=200)
+            scatter_plot_path = reports_dir / "pred_vs_actual_test_optuna.png"
+            plt.savefig(scatter_plot_path, dpi=200)
             plt.close()
-            print(f"Loss curve saved to {loss_plot_path}")
-
-        # Diagnostics: predicted vs actual scatter plot
-        plt.figure(figsize=(5, 5))
-        plt.scatter(y_true_test, y_pred_test, alpha=0.6, edgecolor="k")
-        min_val = float(min(y_true_test.min(), y_pred_test.min()))
-        max_val = float(max(y_true_test.max(), y_pred_test.max()))
-        plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Ideal")
-        plt.xlabel("Actual DockScore")
-        plt.ylabel("Predicted DockScore")
-        plt.title("Docking Regressor: Predicted vs Actual (Test)")
-        plt.legend()
-        plt.tight_layout()
-        scatter_plot_path = reports_dir / "pred_vs_actual_test.png"
-        plt.savefig(scatter_plot_path, dpi=200)
-        plt.close()
-        print(f"Predicted vs actual scatter plot saved to {scatter_plot_path}")
-
-        # Generate concise markdown training report
-        report_path = reports_dir / "training_report.md"
-        with open(report_path, "w") as f:
-            f.write("# Docking Regressor Training Report\n\n")
-            f.write("## Hyperparameters\n\n")
-            for k, v in hparams.items():
-                f.write(f"- **{k}**: {v}\n")
-
-            f.write("\n## Test Set Metrics\n\n")
-            for k, v in test_metrics.items():
-                f.write(f"- **{k}**: {v:.4f}\n")
-
-            f.write("\n## Artifacts\n\n")
-            f.write(f"- **Model**: `{args.out}`\n")
-            f.write(f"- **Training metrics**: `{metrics_path}`\n")
-            f.write(f"- **Test metrics**: `{test_metrics_path}`\n")
-            f.write(f"- **Hyperparameters**: `{hparams_path}`\n")
-            f.write(f"- **Loss curve plot**: `{loss_plot_path}`\n")
-            f.write(f"- **Pred vs actual plot**: `{scatter_plot_path}`\n")
-
-            f.write("\n## Recommendations\n\n")
-            f.write(
-                "- **Data**: Consider expanding the dataset and checking for label noise in `DockScore`.\n"
-            )
-            f.write(
-                "- **Modeling**: Try deeper or residual MLPs, or compare against gradient-boosted trees on ECFP.\n"
-            )
-            f.write(
-                "- **Features**: Explore 3D or protein–ligand features (e.g., graph neural networks) if performance plateaus.\n"
+            print(
+                f"[Optuna] Predicted vs actual scatter plot saved to {scatter_plot_path}"
             )
 
-        print(f"Training report written to {report_path}")
+            # Generate concise markdown training report for Optuna run
+            report_path = reports_dir / "training_report_optuna.md"
+            with open(report_path, "w") as f:
+                f.write("# Docking Regressor Training Report (Optuna)\n\n")
+                f.write("## Optuna Settings\n\n")
+                f.write(f"- **n_trials**: {args.optuna_trials}\n")
+                f.write(
+                    f"- **storage**: "
+                    f"{args.optuna_storage or 'in-memory (no persistent storage)'}\n"
+                )
+                f.write("- **sampler**: TPESampler\n")
+                f.write("- **pruner**: MedianPruner(n_warmup_steps=5)\n")
 
-        # Final clean summary for console
-        print("\n=== Final Summary ===")
-        print("Best hyperparameters:")
-        print(
-            f"  hidden_dim={args.hidden_dim}, lr={args.lr}, "
-            f"dropout={args.dropout}, weight_decay={args.weight_decay}"
-        )
-        print("\nTest metrics:")
-        print(
-            f"  R2={test_metrics['r2']:.4f}, "
-            f"RMSE={test_metrics['rmse']:.4f}, "
-            f"MAE={test_metrics['mae']:.4f}, "
-            f"Pearson r={test_metrics['pearson_r']:.4f}"
-        )
-        print(f"\nModel path: {args.out}")
-        print("For further improvements, see recommendations section of the training report.")
-        
-        # Run baselines (optional)
-        if not args.no_baselines:
-            baseline_results = run_baselines(train_rows, val_rows, test_rows)
-            
-            print("\nBaseline Results:")
-            for model_name, metrics in baseline_results.items():
-                print(f"\n{model_name}:")
-                for key, value in metrics.items():
-                    print(f"  {key}: {value:.4f}")
-            
-            baseline_path = Path("baselines_docking.json")
-            with open(baseline_path, 'w') as f:
-                json.dump(baseline_results, f, indent=2)
-            print(f"\nBaseline metrics saved to {baseline_path}")
+                f.write("\n## Best Hyperparameters (from Optuna)\n\n")
+                for k, v in best_params.items():
+                    f.write(f"- **{k}**: {v}\n")
+
+                f.write("\n## Final Training Hyperparameters\n\n")
+                for k, v in final_hparams.items():
+                    if k == "optuna":
+                        continue
+                    f.write(f"- **{k}**: {v}\n")
+
+                f.write("\n## Test Set Metrics\n\n")
+                for k, v in test_metrics.items():
+                    f.write(f"- **{k}**: {v:.4f}\n")
+
+                f.write("\n## Artifacts\n\n")
+                f.write(f"- **Model**: `{args.out}`\n")
+                f.write(f"- **Training metrics**: `{metrics_path}`\n")
+                f.write(f"- **Test metrics**: `{test_metrics_path}`\n")
+                f.write(f"- **Optuna best params**: `{hparams_optuna_path}`\n")
+                f.write(f"- **Optuna trials**: `{trials_path}`\n")
+                f.write(f"- **Final hyperparameters**: `{final_hparams_path}`\n")
+                f.write(f"- **Loss curve plot**: `{loss_plot_path}`\n")
+                f.write(
+                    f"- **Pred vs actual plot**: `{scatter_plot_path}`\n"
+                )
+
+                f.write("\n## Recommendations\n\n")
+                f.write(
+                    "- **Data**: Consider expanding the dataset and checking for label noise in `DockScore`.\n"
+                )
+                f.write(
+                    "- **Modeling**: Try deeper or residual MLPs, or compare against gradient-boosted trees on ECFP.\n"
+                )
+                f.write(
+                    "- **Features**: Explore 3D or protein–ligand features (e.g., graph neural networks) if performance plateaus.\n"
+                )
+
+            print(f"[Optuna] Training report written to {report_path}")
+
+            # Final clean summary for console
+            print("\n=== Final Summary (Optuna) ===")
+            print("Best hyperparameters (from Optuna):")
+            for k, v in best_params.items():
+                print(f"  {k}: {v}")
+            print("\nTest metrics:")
+            print(
+                f"  R2={test_metrics['r2']:.4f}, "
+                f"RMSE={test_metrics['rmse']:.4f}, "
+                f"MAE={test_metrics['mae']:.4f}, "
+                f"Pearson r={test_metrics['pearson_r']:.4f}"
+            )
+            print(f"\nModel path: {args.out}")
+            print(
+                "For further improvements, see recommendations section "
+                "of the Optuna training report."
+            )
+        else:
+            # --- Original v1 manual hyperparameter search path (backwards compatible) ---
+            best_hp = None
+            hp_results = None
+            if not args.no_hyperopt:
+                hp_results = hyperparameter_search(
+                    train_rows, val_rows, input_dim, max_trials=10
+                )
+                best_hp = hp_results.get("best_params")
+                # Use best hyperparameters
+                if best_hp:
+                    args.hidden_dim = best_hp["hidden_dim"]
+                    args.lr = best_hp["lr"]
+                    args.weight_decay = best_hp["weight_decay"]
+                    args.dropout = best_hp["dropout"]
+                    print(
+                        "\nUsing best hyperparameters: "
+                        f"hidden_dim={args.hidden_dim}, lr={args.lr}, "
+                        f"dropout={args.dropout}, weight_decay={args.weight_decay}"
+                    )
+
+            # Retrain on combined train+val with chosen hyperparameters
+            train_full_rows = train_rows + val_rows
+            print(
+                f"\nRetraining on combined train+val set (n={len(train_full_rows)}) "
+                "with best hyperparameters..."
+            )
+            model, train_metrics = train_model(
+                train_full_rows,
+                val_rows,  # still keep a small validation set for early stopping
+                input_dim,
+                args.hidden_dim,
+                batch_size=args.batch_size,
+                lr=args.lr,
+                epochs=args.epochs,
+                weight_decay=args.weight_decay,
+                dropout=args.dropout,
+                model_dir=Path(args.out).parent,
+            )
+
+            # Save final model to specified path
+            model.save_state(args.out)
+            print(f"\nModel saved to {args.out}")
+
+            # Save training metrics
+            metrics_path = Path("docking_metrics.json")
+            with open(metrics_path, "w") as f:
+                json.dump(train_metrics, f, indent=2)
+            print(f"Training metrics saved to {metrics_path}")
+
+            # Save hyperparameters
+            hparams = {
+                "input_dim": input_dim,
+                "hidden_dim": args.hidden_dim,
+                "lr": args.lr,
+                "dropout": args.dropout,
+                "weight_decay": args.weight_decay,
+                "batch_size": args.batch_size,
+                "epochs": args.epochs,
+                "seed": args.seed,
+                "best_search_results": hp_results,
+            }
+            hparams_path = Path("hparams_docking.json")
+            with open(hparams_path, "w") as f:
+                json.dump(hparams, f, indent=2)
+            print(f"Hyperparameters saved to {hparams_path}")
+
+            # Evaluate on test set (also get predictions for diagnostics)
+            test_metrics, y_true_test, y_pred_test = evaluate_model(
+                model, test_rows, batch_size=args.batch_size, return_preds=True
+            )
+
+            print("\nTest Metrics:")
+            for key, value in test_metrics.items():
+                print(f"  {key}: {value:.4f}")
+
+            # Save test metrics
+            test_metrics_path = Path("docking_test_metrics.json")
+            with open(test_metrics_path, "w") as f:
+                json.dump(test_metrics, f, indent=2)
+            print(f"Test metrics saved to {test_metrics_path}")
+
+            # Diagnostics: loss vs epoch plot
+            history = train_metrics.get("history", [])
+            if history:
+                epochs_hist = [h["epoch"] for h in history]
+                train_loss_hist = [h["train_loss"] for h in history]
+                val_loss_hist = [h["val_loss"] for h in history]
+
+                plt.figure(figsize=(6, 4))
+                plt.plot(epochs_hist, train_loss_hist, label="Train Loss")
+                plt.plot(epochs_hist, val_loss_hist, label="Val Loss")
+                plt.xlabel("Epoch")
+                plt.ylabel("MSE Loss")
+                plt.title("Docking Regressor Training Curve")
+                plt.legend()
+                plt.tight_layout()
+                loss_plot_path = reports_dir / "loss_curve.png"
+                plt.savefig(loss_plot_path, dpi=200)
+                plt.close()
+                print(f"Loss curve saved to {loss_plot_path}")
+
+            # Diagnostics: predicted vs actual scatter plot
+            plt.figure(figsize=(5, 5))
+            plt.scatter(y_true_test, y_pred_test, alpha=0.6, edgecolor="k")
+            min_val = float(min(y_true_test.min(), y_pred_test.min()))
+            max_val = float(max(y_true_test.max(), y_pred_test.max()))
+            plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Ideal")
+            plt.xlabel("Actual DockScore")
+            plt.ylabel("Predicted DockScore")
+            plt.title("Docking Regressor: Predicted vs Actual (Test)")
+            plt.legend()
+            plt.tight_layout()
+            scatter_plot_path = reports_dir / "pred_vs_actual_test.png"
+            plt.savefig(scatter_plot_path, dpi=200)
+            plt.close()
+            print(f"Predicted vs actual scatter plot saved to {scatter_plot_path}")
+
+            # Generate concise markdown training report
+            report_path = reports_dir / "training_report.md"
+            with open(report_path, "w") as f:
+                f.write("# Docking Regressor Training Report\n\n")
+                f.write("## Hyperparameters\n\n")
+                for k, v in hparams.items():
+                    f.write(f"- **{k}**: {v}\n")
+
+                f.write("\n## Test Set Metrics\n\n")
+                for k, v in test_metrics.items():
+                    f.write(f"- **{k}**: {v:.4f}\n")
+
+                f.write("\n## Artifacts\n\n")
+                f.write(f"- **Model**: `{args.out}`\n")
+                f.write(f"- **Training metrics**: `{metrics_path}`\n")
+                f.write(f"- **Test metrics**: `{test_metrics_path}`\n")
+                f.write(f"- **Hyperparameters**: `{hparams_path}`\n")
+                f.write(f"- **Loss curve plot**: `{loss_plot_path}`\n")
+                f.write(f"- **Pred vs actual plot**: `{scatter_plot_path}`\n")
+
+                f.write("\n## Recommendations\n\n")
+                f.write(
+                    "- **Data**: Consider expanding the dataset and checking for label noise in `DockScore`.\n"
+                )
+                f.write(
+                    "- **Modeling**: Try deeper or residual MLPs, or compare against gradient-boosted trees on ECFP.\n"
+                )
+                f.write(
+                    "- **Features**: Explore 3D or protein–ligand features (e.g., graph neural networks) if performance plateaus.\n"
+                )
+
+            print(f"Training report written to {report_path}")
+
+            # Final clean summary for console
+            print("\n=== Final Summary ===")
+            print("Best hyperparameters:")
+            print(
+                f"  hidden_dim={args.hidden_dim}, lr={args.lr}, "
+                f"dropout={args.dropout}, weight_decay={args.weight_decay}"
+            )
+            print("\nTest metrics:")
+            print(
+                f"  R2={test_metrics['r2']:.4f}, "
+                f"RMSE={test_metrics['rmse']:.4f}, "
+                f"MAE={test_metrics['mae']:.4f}, "
+                f"Pearson r={test_metrics['pearson_r']:.4f}"
+            )
+            print(f"\nModel path: {args.out}")
+            print(
+                "For further improvements, see recommendations section "
+                "of the training report."
+            )
+
+            # Run baselines (optional)
+            if not args.no_baselines:
+                baseline_results = run_baselines(train_rows, val_rows, test_rows)
+
+                print("\nBaseline Results:")
+                for model_name, metrics in baseline_results.items():
+                    print(f"\n{model_name}:")
+                    for key, value in metrics.items():
+                        print(f"  {key}: {value:.4f}")
+
+                baseline_path = Path("baselines_docking.json")
+                with open(baseline_path, "w") as f:
+                    json.dump(baseline_results, f, indent=2)
+                print(f"\nBaseline metrics saved to {baseline_path}")
 
 
 if __name__ == "__main__":
