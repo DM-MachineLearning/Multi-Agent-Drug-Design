@@ -3,3 +3,7 @@ numpy
 pandas
 pyyaml
 rdkit-pypi
+openpyxl
+scikit-learn
+scipy
+optuna
