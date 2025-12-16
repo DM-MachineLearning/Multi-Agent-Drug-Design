@@ -2,15 +2,12 @@
 
 import numpy as np
 from typing import List
-
 from rdkit import Chem, DataStructs
 from rdkit.Chem import Descriptors
 from rdkit.Chem import rdFingerprintGenerator
 
 
-# =============================================================================
 # Fingerprint configuration
-# =============================================================================
 
 FP_RADIUS = 2
 FP_BITS = 2048
@@ -18,16 +15,16 @@ N_DESCRIPTORS = 7
 FEATURE_DIM = FP_BITS + N_DESCRIPTORS
 
 
-# Create Morgan fingerprint generator ONCE (important)
+# Create Morgan fingerprint generator 
+
 _morgan_gen = rdFingerprintGenerator.GetMorganGenerator(
     radius=FP_RADIUS,
     fpSize=FP_BITS
 )
 
 
-# =============================================================================
 # Feature extraction
-# =============================================================================
+
 
 def smiles_to_features(smiles: str) -> np.ndarray:
     """
