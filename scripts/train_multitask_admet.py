@@ -26,9 +26,7 @@ from rdkit.Chem.rdFingerprintGenerator import GetMorganGenerator
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 
-# =========================
 # CONFIG
-# =========================
 
 SEED = 42
 DATA_ROOT = Path("Datasets/Auto_ML_dataset")
@@ -66,9 +64,7 @@ TASK_DROPOUT_P = 0.1
 DEVICE = torch.device("cpu")
 
 
-# =========================
 # REPRODUCIBILITY
-# =========================
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -77,10 +73,7 @@ def set_seed(seed: int):
 
 set_seed(SEED)
 
-
-# =========================
 # FEATURIZATION
-# =========================
 
 _morgan = GetMorganGenerator(radius=FP_RADIUS, fpSize=FP_BITS)
 
@@ -110,9 +103,7 @@ def featurize_dataframe(df: pd.DataFrame):
     return X, y
 
 
-# =========================
 # DATASET (MASKED)
-# =========================
 
 class MultiTaskDataset(Dataset):
     def __init__(self, X: np.ndarray, y: Dict[str, np.ndarray]):
@@ -137,9 +128,7 @@ class MultiTaskDataset(Dataset):
         return self.X[idx], labels, masks
 
 
-# =========================
 # MODEL
-# =========================
 
 class MultiTaskMLP(nn.Module):
     def __init__(self, input_dim: int, tasks: List[str]):
@@ -165,9 +154,7 @@ class MultiTaskMLP(nn.Module):
         return {t: self.heads[t](h).squeeze(1) for t in TASKS}
 
 
-# =========================
 # LOAD DATA (UNION LOGIC)
-# =========================
 
 def load_union_dataset(split: str):
     all_X = []
@@ -199,9 +186,7 @@ def load_union_dataset(split: str):
     return X, y
 
 
-# =========================
 # TRAINING
-# =========================
 
 def main():
     print("Loading datasets...")
@@ -262,9 +247,9 @@ def main():
 
         print(f"Epoch {epoch:03d} | Train Loss: {total_loss:.4f}")
 
-    # =========================
+
     # EVALUATION
-    # =========================
+ 
 
     model.eval()
     metrics = {}
