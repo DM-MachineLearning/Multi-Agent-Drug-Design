@@ -1,0 +1,47 @@
+# Molecular Property Configuration for Agentic Discovery
+# target: 'high' (maximize) or 'low' (minimize)
+# threshold: the value at which a molecule is considered "passing"
+
+activity:
+  target: "high"
+  threshold: 0.8
+
+solubility:
+  target: "high"
+  threshold: -3.0
+
+toxicity:
+  target: "low"
+  threshold: 0.2
+
+herg:
+  target: "low"
+  threshold: 0.3
+
+bbb_permeability:
+  target: "high"
+  threshold: 0.7
+
+cyp450_inhibition:
+  target: "low"
+  threshold: 0.4
+
+half_life:
+  target: "high"
+  threshold: 0.5
+
+clearance:
+  target: "low"
+  threshold: 0.3
+
+molecular_weight:
+  target: "low"
+  threshold: 500.0
+
+sas_score:
+  target: "low"
+  threshold: 4.5
+
+logp:
+  target: "high"
+  threshold: 1.0

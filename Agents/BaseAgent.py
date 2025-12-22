@@ -1,10 +1,7 @@
-PROPERTY_CONFIG = {
-    'activity': {'target': 'high', 'threshold': 0.8},
-    'solubility': {'target': 'high', 'threshold': -3.0}, # LogP > -3
-    'toxicity': {'target': 'low', 'threshold': 0.2},
-    'herg': {'target': 'low', 'threshold': 0.3},
-    # ... add all 11 here
-}
+import torch
+import torch.multinomial as F
+
+from configs.
 
 class BaseAgent:
     def __init__(self, agent_id, vae_backbone, scoring_engine, blackboard):
