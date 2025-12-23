@@ -6,42 +6,59 @@ activity:
   target: "high"
   threshold: 0.8
 
-solubility:
-  target: "high"
-  threshold: -3.0
+SA_score:
+  target: "low"
+  threshold: 3.0
+
+QED:
+  target: "high"`
+  threshold: 0.6
+
+IC50:
+  target: "low"
+  threshold: 1.0
 
 toxicity:
-  target: "low"
-  threshold: 0.2
+  BBBP:
+    target: "low"
+    threshold: 0.3
+  
+  Caco2_permeability:
+    target: "high"
+    threshold: 0.7
 
-herg:
-  target: "low"
-  threshold: 0.3
+  CYP1A2_inhibition:
+    target: "low"
+    threshold: 0.4
 
-bbb_permeability:
-  target: "high"
-  threshold: 0.7
+  CYP2C9_inhibition:
+    target: "low"
+    threshold: 0.4
 
-cyp450_inhibition:
-  target: "low"
-  threshold: 0.4
+  CYP2C19_inhibition:
+    target: "low"
+    threshold: 0.4
 
-half_life:
-  target: "high"
-  threshold: 0.5
+  CYP2D6_inhibition:
+    target: "low"
+    threshold: 0.4
 
-clearance:
-  target: "low"
-  threshold: 0.3
+  CYP3A4_inhibition:
+    target: "low"
+    threshold: 0.4
 
-molecular_weight:
-  target: "low"
-  threshold: 500.0
-
-sas_score:
-  target: "low"
-  threshold: 4.5
-
-logp:
-  target: "high"
-  threshold: 1.0
+  HERG_inhibition:
+    target: "low"
+    threshold: 0.3
+  
+  HLM_stability:
+    target: "high"
+    threshold: 0.6
+  
+  P-gp_substrate:
+    target: "low"
+    threshold: 0.4
+  
+  RLM_stability:
+    target: "high"
+    threshold: 0.6
