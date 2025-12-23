@@ -1,7 +1,9 @@
 import torch
-import torch.multinomial as F
+import torch.nn.functional as F
 
-from configs.
+from utils.utils import load_property_config
+
+PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 
 class BaseAgent:
     def __init__(self, agent_id, vae_backbone, scoring_engine, blackboard):

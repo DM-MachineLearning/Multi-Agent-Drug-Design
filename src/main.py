@@ -1,5 +1,5 @@
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 
 from Agents.hunter import HunterAgent
 from Agents.MedicAgent import MedicAgent
@@ -18,12 +18,10 @@ def load_resources():
     Load your pre-trained VAE and 11 ADMET classifiers.
     Replace placeholders with your actual model loading logic.
     """
-    # Load your trained VAE Backbone
+    # TODO: Change this to actual model loading code
     vae = torch.load("vae_backbone.pt") 
     vae.eval()
     
-    # Load your 11 Property MLPs
-    # property_models = { 'activity': MLP(), 'herg': MLP(), ... }
     property_models = {}
     for prop in PROPERTY_CONFIG.keys():
         model = torch.load(f"models/{prop}_classifier.pt")
