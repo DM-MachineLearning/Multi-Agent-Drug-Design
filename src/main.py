@@ -3,6 +3,9 @@ import torch.nn.functional as F
 
 from Agents.hunter import HunterAgent
 from Agents.MedicAgent import MedicAgent
+
+from Generators.VAE import VAE
+
 from utils.Blackboard import Blackboard
 from utils.ScoringEngine import ScoringEngine
 from utils.utils import load_property_config
@@ -19,7 +22,7 @@ def load_resources():
     Replace placeholders with your actual model loading logic.
     """
     # TODO: Change this to actual model loading code
-    vae = torch.load("vae_backbone.pt") 
+    vae = VAE(model_path="models/vae_model.pt")
     vae.eval()
     
     property_models = {}

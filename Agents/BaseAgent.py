@@ -1,12 +1,16 @@
 import torch
 import torch.nn.functional as F
 
+from Generators.VAE import VAE
+
 from utils.utils import load_property_config
+from utils.Blackboard import Blackboard
+from utils.ScoringEngine import ScoringEngine
 
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 
 class BaseAgent:
-    def __init__(self, agent_id, vae_backbone, scoring_engine, blackboard):
+    def __init__(self, agent_id, vae_backbone: VAE, scoring_engine: ScoringEngine, blackboard: Blackboard):
         self.id = agent_id
         self.vae = vae_backbone
         self.scorer = scoring_engine
@@ -66,3 +70,20 @@ class BaseAgent:
             primary_flaw = flaws[0] # Priorities can be set here
             self.board.post_task(primary_flaw, z, scores)
             print(f"Agent {self.id}: Active but bad {primary_flaw}. Posted to Board.")
+
+    def run_step(self):
+        """One step of the agent's operation: Generate/Fix and Analyze."""
+        task = self.board.fetch_task(self.id)
+        
+        if task is None:
+            # No task assigned, pure exploration
+            z = torch.randn((1, self.vae.latent_dim)) # Sample random latent vector
+            print(f"Agent {self.id}: Exploring new molecule.")
+        else:
+            # Task assigned, attempt to fix
+            flaw_prop, constraint_z, _ = task
+            print(f"Agent {self.id}: Fixing molecule for {flaw_prop}.")
+            z = self.gradient_ascent(constraint_z, flaw_prop, constraint_z=constraint_z)
+        
+        # Analyze the generated/fixed molecule
+        self.analyze_and_route(z)
