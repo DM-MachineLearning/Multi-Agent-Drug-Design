@@ -100,34 +100,3 @@ soft_filters:
     target: low
     threshold: 0.4
     weight: 0.4
-
-# ------------------------------------------------------------
-# SCORING CONFIGURATION
-# ------------------------------------------------------------
-scoring:
-  soft_score_method: weighted_hinge
-  normalize_soft_score: true
-  include_potency: true
-  include_deterministic: true
-
-  final_score_weights:
-    soft: 0.55
-    potency: 0.30
-    deterministic: 0.15
-
-# ------------------------------------------------------------
-# IMPLEMENTATION NOTES (COMMENTS ONLY)
-#
-# For risk endpoints (target: low):
-#   penalty = max(0, p - threshold)
-#
-# For benefit endpoints (target: high):
-#   penalty = max(0, threshold - p)
-#
-# Soft score:
-#   soft_score = 1 - (sum(weight * penalty) / sum(weight))
-#   soft_score is clipped to [0, 1]
-#
-# Hard filters:
-#   Molecule is rejected if ANY hard filter fails
-# ------------------------------------------------------------

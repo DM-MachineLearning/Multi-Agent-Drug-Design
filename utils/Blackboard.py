@@ -1,3 +1,8 @@
+from collections import deque
+
+from utils.utils import load_property_config
+PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
+
 class Blackboard:
     """The Shared Memory."""
     def __init__(self):
@@ -10,8 +15,9 @@ class Blackboard:
         if tag in self.task_queues:
             self.task_queues[tag].append((z, current_scores))
 
-    def fetch_task(self, property_to_fix):
-        tag = f"needs_fix:{property_to_fix}"
-        if self.task_queues[tag]:
-            return self.task_queues[tag].popleft()
+    def fetch_task(self, agent_id):
+        """Fetch a task for a specific agent."""
+        for key, queue in self.task_queues.items():
+            if queue:
+                return key.split(":")[1], *queue.popleft()
         return None

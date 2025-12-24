@@ -2,9 +2,14 @@ import torch
 
 from BaseAgent import BaseAgent
 
+from Generators.VAE import VAE
+
+from utils.Blackboard import Blackboard
+from utils.ScoringEngine import ScoringEngine
+
 class MedicAgent(BaseAgent):
     """Fixes specific properties."""
-    def __init__(self, agent_id, vae, engine, board, specialty_property):
+    def __init__(self, agent_id, vae: VAE, engine: ScoringEngine, board: Blackboard, specialty_property):
         super().__init__(agent_id, vae, engine, board)
         self.specialty = specialty_property # e.g., 'toxicity'
 
