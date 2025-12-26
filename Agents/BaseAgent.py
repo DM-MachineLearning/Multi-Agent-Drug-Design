@@ -1,3 +1,4 @@
+from abc import abstractmethod
 import torch
 import torch.nn.functional as F
 
@@ -82,16 +83,7 @@ class BaseAgent:
             self.board.post_task(primary_flaw, z, scores)
             print(f"Agent {self.agent_property}: Potent but needs fix for {primary_flaw}. Posted to Board.")
 
+    @abstractmethod
     def run_step(self):
-        """One step of the agent's operation: Generate/Fix and Analyze."""
-        task = self.board.fetch_task(self.agent_property)
-        
-        if task is None:
-            z = self.vae.generate_molecule()
-            print(f"Agent {self.agent_property}: Exploring new molecule.")
-        else:
-            flaw_prop, constraint_z, _ = task
-            print(f"Agent {self.agent_property}: Fixing molecule for {flaw_prop}.")
-            z = self.gradient_ascent(constraint_z, flaw_prop, constraint_z=constraint_z)
-        
-        self.analyze_and_route(z)
+        """Subclasses must implement this."""
+        pass

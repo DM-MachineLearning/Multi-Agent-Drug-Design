@@ -1,23 +1,21 @@
-import torch
-
 from BaseAgent import BaseAgent
 
-from Generators.VAE import VAE
-
-from utils.Blackboard import Blackboard
-from utils.ScoringEngine import ScoringEngine
-
 class HunterAgent(BaseAgent):
-    """Explores random space to find high-activity leads."""
-    def __init__(self, agent_id, vae_backbone: VAE, scoring_engine: ScoringEngine, blackboard: Blackboard):
-        super().__init__(agent_id, vae_backbone, scoring_engine, blackboard)
+    def __init__(self, agent_property, vae, engine, board, objective_prop="potency"):
+        super().__init__(agent_property, vae, engine, board)
+        self.objective = objective_prop
 
     def run_step(self):
-        # 1. Random Sample
-        z = self.vae.generate_molecule(batch_size=1)
+        z_random = self.vae.generate_molecule()
+
+        print(f"Hunter {self.agent_property}: Hunting for new {self.objective} leads...")
+        z_optimized = self.gradient_ascent(
+            z_random, 
+            self.objective, 
+            steps=50,
+            lr=0.1, 
+            constraint_z=None,
+            lambda_penalty=0
+        )
         
-        # 2. Optimize for Activity (No constraints)
-        z_optimized = self.gradient_ascent(z, 'activity')
-        
-        # 3. Analyze results
         self.analyze_and_route(z_optimized)
