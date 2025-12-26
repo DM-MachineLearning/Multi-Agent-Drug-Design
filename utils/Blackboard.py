@@ -34,3 +34,6 @@ class Blackboard:
         else:
             print(f"Warning: No task found for {property_to_fix}. Need to turn back to exploration.")
         return None
+    
+    def post_to_hall_of_fame(self, z, scores):
+        self.hall_of_fame.append((z, scores))
