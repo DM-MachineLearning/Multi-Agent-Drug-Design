@@ -1,15 +1,3 @@
-# ============================================================
-# Agentic Discovery Filter Specification
-# Target: AKT1 (oncology, non-CNS)
-#
-# All ADMET endpoints are binary classifiers returning
-# calibrated probabilities p in [0, 1].
-#
-# Conventions:
-# - Risk endpoints: pass if p <= threshold
-# - Benefit endpoints: pass if p >= threshold
-# ============================================================
-
 metadata:
   target: AKT1
   therapeutic_area: oncology
