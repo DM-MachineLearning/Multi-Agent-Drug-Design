@@ -1,7 +1,7 @@
 from collections import deque
 
 from utils import load_property_config
-PROPERTY_CONFIG = load_property_config("configs/final_config.yaml")
+PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 
 class Blackboard:
     """The Shared Memory."""
