@@ -11,7 +11,7 @@ PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 
 class BaseAgent:
     def __init__(self, agent_property: str, vae_backbone: VAE, scoring_engine: ScoringEngine, blackboard: Blackboard):
-        self.id = agent_property
+        self.agent_property = agent_property
         self.vae = vae_backbone
         self.scorer = scoring_engine
         self.board = blackboard
@@ -52,41 +52,46 @@ class BaseAgent:
         """Decides if a molecule is a Success, a Failure, or a 'Fixable' task."""
         scores = self.scorer.get_all_scores(z)
         
-        # Check primary success (e.g., is it active?)
-        if scores['activity'] < PROPERTY_CONFIG['activity']['threshold']:
-            return # Discard, not active enough to care about
-            
-        # If active, check for flaws (ADMET issues)
+        # 1. Check Primary Success (Potency)
+        potency_cfg = PROPERTY_CONFIG.get('potency')
+        if scores['potency'] < potency_cfg['threshold']:
+            return # Discard: If it's not potent, we don't fix ADMET yet.
+
+        # 2. Check Hard Filters (Immediate Discard if failed)
+        for prop, cfg in PROPERTY_CONFIG.get('hard_filters', {}).items():
+            is_bad = (scores[prop] > cfg['threshold']) if cfg['target'] == 'low' else (scores[prop] < cfg['threshold'])
+            if is_bad:
+                print(f"Agent {self.agent_property}: Discarded due to Hard Filter: {prop}")
+                return
+
+        # 3. Check Soft Filters (These are "Fixable" flaws)
         flaws = []
-        for prop, cfg in PROPERTY_CONFIG.items():
-            if prop == 'activity': continue
-            
+        for prop, cfg in PROPERTY_CONFIG.get('soft_filters', {}).items():
             is_bad = (scores[prop] > cfg['threshold']) if cfg['target'] == 'low' else (scores[prop] < cfg['threshold'])
             if is_bad:
                 flaws.append(prop)
-        
+
+        # 4. Routing
         if not flaws:
             self.board.hall_of_fame.append((z, scores))
-            print(f"Agent {self.id}: FOUND PERFECT MOLECULE!")
+            print(f"Agent {self.agent_property}: FOUND SUCCESSFUL LEAD!")
         else:
-            # Post the first major flaw to the blackboard
-            primary_flaw = flaws[0] # Priorities can be set here
+            flaws.sort(key=lambda x: PROPERTY_CONFIG['soft_filters'][x].get('weight', 0), reverse=True)
+            primary_flaw = flaws[0]
+            
             self.board.post_task(primary_flaw, z, scores)
-            print(f"Agent {self.id}: Active but bad {primary_flaw}. Posted to Board.")
+            print(f"Agent {self.agent_property}: Potent but needs fix for {primary_flaw}. Posted to Board.")
 
     def run_step(self):
         """One step of the agent's operation: Generate/Fix and Analyze."""
         task = self.board.fetch_task(self.agent_property)
         
         if task is None:
-            # No task assigned, pure exploration
-            z = torch.randn((1, self.vae.latent_dim)) # Sample random latent vector
-            print(f"Agent {self.id}: Exploring new molecule.")
+            z = self.vae.generate_molecule()
+            print(f"Agent {self.agent_property}: Exploring new molecule.")
         else:
-            # Task assigned, attempt to fix
             flaw_prop, constraint_z, _ = task
-            print(f"Agent {self.id}: Fixing molecule for {flaw_prop}.")
+            print(f"Agent {self.agent_property}: Fixing molecule for {flaw_prop}.")
             z = self.gradient_ascent(constraint_z, flaw_prop, constraint_z=constraint_z)
         
-        # Analyze the generated/fixed molecule
         self.analyze_and_route(z)
