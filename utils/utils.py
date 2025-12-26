@@ -33,3 +33,17 @@ def get_property_details(config, property_name):
                 return value[property_name]
     
     return None
+
+def extract_property_keys(config):
+    """
+    Recursively finds all keys that represent actual properties 
+    (leaves of the config tree that contain 'target' or 'threshold').
+    """
+    keys = []
+    for key, value in config.items():
+        if isinstance(value, dict):
+            if 'target' in value or 'threshold' in value:
+                keys.append(key)
+            else:
+                keys.extend(extract_property_keys(value))
+    return keys

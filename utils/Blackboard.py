@@ -1,21 +1,13 @@
 from collections import deque
 
-from utils import load_property_config
+from utils import extract_property_keys, load_property_config
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 
 class Blackboard:
     """The Shared Memory."""
     def __init__(self, config):
         all_properties = []
-        
-        if "potency" in config:
-            all_properties.append("potency")
-
-        if "hard_filters" in config:
-            all_properties.extend(config["hard_filters"].keys())
-
-        if "soft_filters" in config:
-            all_properties.extend(config["soft_filters"].keys())
+        all_properties = extract_property_keys(config)
 
         self.task_queues = {f"needs_fix:{k}": deque() for k in all_properties}
         self.hall_of_fame = []
