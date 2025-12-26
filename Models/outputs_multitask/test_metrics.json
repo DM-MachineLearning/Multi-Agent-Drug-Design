@@ -1,0 +1,46 @@
+{
+  "BBBP": {
+    "roc_auc": 0.9493100944081336,
+    "accuracy": 0.9266503667481663
+  },
+  "Caco2_permeability": {
+    "roc_auc": 0.8275912913064725,
+    "accuracy": 0.7669064748201438
+  },
+  "CYP1A2_inhibition": {
+    "roc_auc": 0.9259673656288722,
+    "accuracy": 0.8465791292328957
+  },
+  "CYP2C9_inhibition": {
+    "roc_auc": 0.9099480695416573,
+    "accuracy": 0.8137767220902613
+  },
+  "CYP2C19_inhibition": {
+    "roc_auc": 0.9070553411234562,
+    "accuracy": 0.8130330945069942
+  },
+  "CYP2D6_inhibition": {
+    "roc_auc": 0.8846367790765266,
+    "accuracy": 0.8604376108811355
+  },
+  "CYP3A4_inhibition": {
+    "roc_auc": 0.904766337226219,
+    "accuracy": 0.8221320973348784
+  },
+  "HERG_inhibition": {
+    "roc_auc": 0.8667863302009643,
+    "accuracy": 0.7909562638991846
+  },
+  "HLM_stability": {
+    "roc_auc": 0.833466683335417,
+    "accuracy": 0.7781541066892464
+  },
+  "P-gp_substrate": {
+    "roc_auc": 0.8602758007117437,
+    "accuracy": 0.7820299500831946
+  },
+  "RLM_stability": {
+    "roc_auc": 0.8766194154078394,
+    "accuracy": 0.8022508038585209
+  }
+}
