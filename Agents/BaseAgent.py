@@ -3,15 +3,15 @@ import torch.nn.functional as F
 
 from Generators.VAE import VAE
 
-from utils.utils import load_property_config
+from utils.utils import get_property_details, load_property_config
 from utils.Blackboard import Blackboard
 from utils.ScoringEngine import ScoringEngine
 
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 
 class BaseAgent:
-    def __init__(self, agent_id, vae_backbone: VAE, scoring_engine: ScoringEngine, blackboard: Blackboard):
-        self.id = agent_id
+    def __init__(self, agent_property: str, vae_backbone: VAE, scoring_engine: ScoringEngine, blackboard: Blackboard):
+        self.id = agent_property
         self.vae = vae_backbone
         self.scorer = scoring_engine
         self.board = blackboard
@@ -25,7 +25,10 @@ class BaseAgent:
         z = z.detach().clone().requires_grad_(True)
         optimizer = torch.optim.Adam([z], lr=lr)
         
-        target_cfg = PROPERTY_CONFIG[objective_prop]
+        target_cfg = get_property_details(PROPERTY_CONFIG, objective_prop)
+        if target_cfg is None:
+            raise ValueError(f"Property {objective_prop} not found in configuration.")
+
         maximize = (target_cfg['target'] == 'high')
 
         for _ in range(steps):
@@ -73,7 +76,7 @@ class BaseAgent:
 
     def run_step(self):
         """One step of the agent's operation: Generate/Fix and Analyze."""
-        task = self.board.fetch_task(self.id)
+        task = self.board.fetch_task(self.agent_property)
         
         if task is None:
             # No task assigned, pure exploration
