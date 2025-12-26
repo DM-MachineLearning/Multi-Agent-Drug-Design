@@ -1,64 +1,90 @@
-# Molecular Property Configuration for Agentic Discovery
-# target: 'high' (maximize) or 'low' (minimize)
-# threshold: the value at which a molecule is considered "passing"
+metadata:
+  target: AKT1
+  therapeutic_area: oncology
+  profile: non_CNS
 
-activity:
-  target: "high"
-  threshold: 0.8
+# ------------------------------------------------------------
+# Deterministic properties (non-ML)
+# ------------------------------------------------------------
+deterministic:
+  SA_score:
+    target: low
+    threshold: 3.0
 
-SA_score:
-  target: "low"
-  threshold: 3.0
-
-QED:
-  target: "high"`
-  threshold: 0.6
-
-IC50:
-  target: "low"
-  threshold: 1.0
-
-toxicity:
-  BBBP:
-    target: "low"
-    threshold: 0.3
-  
-  Caco2_permeability:
-    target: "high"
-    threshold: 0.7
-
-  CYP1A2_inhibition:
-    target: "low"
-    threshold: 0.4
-
-  CYP2C9_inhibition:
-    target: "low"
-    threshold: 0.4
-
-  CYP2C19_inhibition:
-    target: "low"
-    threshold: 0.4
-
-  CYP2D6_inhibition:
-    target: "low"
-    threshold: 0.4
-
-  CYP3A4_inhibition:
-    target: "low"
-    threshold: 0.4
-
-  HERG_inhibition:
-    target: "low"
-    threshold: 0.3
-  
-  HLM_stability:
-    target: "high"
+  QED:
+    target: high
     threshold: 0.6
-  
-  P-gp_substrate:
-    target: "low"
+
+# ------------------------------------------------------------
+# Potency (classification-based)
+# ------------------------------------------------------------
+potency:
+  endpoint: pIC50_classifier
+  positive_definition: pIC50 >= 6.0
+  target: high
+  threshold: 0.5
+  role: soft
+  weight: 2.0
+
+# ------------------------------------------------------------
+# HARD FILTERS
+# Molecule must pass ALL hard filters
+# ------------------------------------------------------------
+hard_filters:
+  hERG_blocker_prob:
+    target: low
+    threshold: 0.3
+
+  CYP3A4_inhib_prob:
+    target: low
     threshold: 0.4
-  
-  RLM_stability:
-    target: "high"
+
+# ------------------------------------------------------------
+# SOFT FILTERS
+# Used for ranking / reward shaping
+# ------------------------------------------------------------
+soft_filters:
+  BBBP_prob:
+    target: low
+    threshold: 0.3
+    weight: 0.8
+
+  Caco2_high_perm_prob:
+    target: high
     threshold: 0.6
+    weight: 1.0
+
+  HLM_stable_prob:
+    target: high
+    threshold: 0.6
+    weight: 1.0
+
+  RLM_stable_prob:
+    target: high
+    threshold: 0.6
+    weight: 0.8
+
+  Pgp_substrate_prob:
+    target: low
+    threshold: 0.4
+    weight: 0.6
+
+  CYP1A2_inhib_prob:
+    target: low
+    threshold: 0.4
+    weight: 0.4
+
+  CYP2C9_inhib_prob:
+    target: low
+    threshold: 0.4
+    weight: 0.4
+
+  CYP2C19_inhib_prob:
+    target: low
+    threshold: 0.4
+    weight: 0.4
+
+  CYP2D6_inhib_prob:
+    target: low
+    threshold: 0.4
+    weight: 0.4
