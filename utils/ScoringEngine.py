@@ -1,7 +1,10 @@
 import torch
 
+from src.madm.properties.qed import qed_from_smiles
+from src.madm.properties.sa_score import sa_from_smiles
+
 class ScoringEngine:
-    def __init__(self, multitask_model, task_names):
+    def __init__(self, multitask_model, admet_model_path):
         """
         Args:
             multitask_model: The loaded MultiTaskADMETModel instance.
@@ -9,15 +12,26 @@ class ScoringEngine:
         """
         self.model = multitask_model
         self.model.eval()
-        self.task_names = task_names
+        self.admet_model_path = admet_model_path
 
-    def _get_deterministic_scores(self, smis):
+    def _get_deterministic_scores(self, z):
         """Placeholders for non-ML properties."""
         return {
-            "SA_score": 0.0, # TODO: Implement RDKit SA calculation
-            "QED": 0.0,      # TODO: Implement RDKit QED calculation
-            "pIC50_classifier": 0.0 # TODO: Implement Potency model
+            "SA_score": sa_from_smiles(z),
+            "QED": qed_from_smiles(z),
+            "pIC50_classifier": 0.0  # TODO: Implement Potency model
         }
+    
+    def _get_admet_score(self, z):
+        """Get ADMET scores from the multitask model."""
+        with torch.no_grad():
+            admet_outputs = self.model(z)
+        
+        admet_scores = {}
+        for i, task_name in enumerate(self.model.task_names):
+            admet_scores[task_name] = admet_outputs[:, i].cpu().numpy()
+        
+        return admet_scores
 
     def get_all_scores(self, z):
         """
@@ -27,18 +41,8 @@ class ScoringEngine:
         all_results = {}
         
         # 1. Get Placeholders
-        all_results.update(self._get_deterministic_scores(None))
-
-        # 2. Get Multitask ML Scores (Captions)
-        with torch.no_grad():
-            # The model returns a dict of logits: {task_name: tensor}
-            logits_dict = self.model(z)
-            
-            # Convert logits to probabilities
-            for task_name, logit in logits_dict.items():
-                # Apply sigmoid to convert logit to [0, 1] probability
-                probability = torch.sigmoid(logit).item()
-                all_results[task_name] = probability
+        all_results.update(self._get_deterministic_scores(z))
+        all_results.update(self._get_admet_score(z))
 
         return all_results
 
