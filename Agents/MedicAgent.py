@@ -5,8 +5,8 @@ class MedicAgent(BaseAgent):
     Priority 1: Fix specific flaws (Constraint Optimization).
     Priority 2: Generate new leads if idle (Pure Exploration).
     """
-    def __init__(self, agent_property, vae, engine, board, specialty_property):
-        super().__init__(agent_property, vae, engine, board)
+    def __init__(self, specialty_property, vae, engine, board):
+        super().__init__(specialty_property, vae, engine, board)
         self.specialty = specialty_property
 
     def run_step(self):
@@ -14,7 +14,7 @@ class MedicAgent(BaseAgent):
         
         if task:
             flaw_prop, z_start, _ = task
-            print(f"Medic {self.agent_property}: [FIXING] Optimization for {flaw_prop}")
+            print(f"Medic {self.specialty}: [FIXING] Optimization for {flaw_prop}")
 
             z_out = self.gradient_ascent(
                 z_start, 
@@ -26,7 +26,7 @@ class MedicAgent(BaseAgent):
             )
             
         else:
-            print(f"Medic {self.agent_property}: [IDLE] Switching to Hunter Mode...")
+            print(f"Medic {self.specialty}: [IDLE] Switching to Hunter Mode...")
 
             z_out = self.vae.generate_molecule()
 

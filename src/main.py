@@ -1,5 +1,5 @@
+import yaml
 import torch
-import torch.nn.functional as F
 
 from Agents.hunter import HunterAgent
 from Agents.MedicAgent import MedicAgent
@@ -8,55 +8,31 @@ from Generators.VAE import VAE
 
 from utils.Blackboard import Blackboard
 from utils.ScoringEngine import ScoringEngine
-from utils.utils import load_property_config
+from utils.utils import load_property_config, extract_property_keys, extract_hard_filter_keys, extract_soft_filter_keys
 
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
+PATH_CONFIG = yaml.safe_load(open("configs/paths.yaml"))
 
-# =========================================================
-# 1. INITIALIZATION & LOADING
-# =========================================================
-
-def load_resources():
-    """
-    Load your pre-trained VAE and 11 ADMET classifiers.
-    Replace placeholders with your actual model loading logic.
-    """
-    # TODO: Change this to actual model loading code
+def main():
     vae = VAE(model_path="models/vae_model.pt")
     vae.eval()
     
-    property_models = {}
-    for prop in PROPERTY_CONFIG.keys():
-        model = torch.load(f"models/{prop}_classifier.pt")
-        model.eval()
-        property_models[prop] = model
-        
-    return vae, property_models
-
-# =========================================================
-# 2. THE MAIN DISCOVERY LOOP
-# =========================================================
-
-def main():
-    # --- Step 1: Initialize System Components ---
-    vae, property_models = load_resources()
-    scoring_engine = ScoringEngine(property_models)
-    blackboard = Blackboard()
+    scoring_engine = ScoringEngine(
+        activity_classifier_path=PATH_CONFIG['activity_classifier_model_path'],
+        admet_model_path=PATH_CONFIG['admet_model_path']
+    )
+    blackboard = Blackboard(config=PROPERTY_CONFIG)
     
-    # --- Step 2: Define Agent Population ---
-    # You can balance the team based on your needs.
-    # Here, we have 2 Explorers and 1 specialist for each ADMET property.
     agents = []
-    
-    # Add Hunters (Unconstrained Exploration)
-    for i in range(2):
-        agents.append(HunterAgent(f"Hunter_{i}", vae, scoring_engine, blackboard))
-    
-    # Add Medics (Constrained Refinement) for specific properties
-    # We assign one agent to focus on 'herg', one on 'toxicity', etc.
-    admet_properties = [p for p in PROPERTY_CONFIG.keys() if p != 'activity']
-    for i, prop in enumerate(admet_properties):
-        agents.append(MedicAgent(f"Medic_{prop}", vae, scoring_engine, blackboard, prop))
+
+    hard_filters = extract_hard_filter_keys(PROPERTY_CONFIG)
+    soft_filters = extract_soft_filter_keys(PROPERTY_CONFIG)
+    for i in range(len(hard_filters)):
+        agents.append(HunterAgent(f"{hard_filters[i]}", vae, scoring_engine, blackboard))
+
+    admet_properties = [hard_filters + soft_filters]
+    for i in range(len(admet_properties)):
+        agents.append(MedicAgent(f"{admet_properties[i]}", vae, scoring_engine, blackboard))
 
     # --- Step 3: Start Evolutionary Generations ---
     NUM_GENERATIONS = 10
