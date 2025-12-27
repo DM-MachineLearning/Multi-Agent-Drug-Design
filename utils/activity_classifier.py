@@ -5,23 +5,21 @@ from rdkit.Chem import AllChem
 from rdkit.DataStructs import BitVectToText
 import pickle
 
+class ActivityClassifier:
+    def __init__(self, model_path: str):
+        with open(model_path, 'rb') as file:
+            self.model = pickle.load(file)
 
-def classify_activity(smiles_list):
-    """
-    Classifies the activity of molecules based on their SMILES representation.
-    
-    Args:
-        smiles_list (list of str): List of SMILES strings representing molecules.
-        
-    Returns:
-        pd.DataFrame: DataFrame containing SMILES and their predicted activity.
-    """
+    def classify_activity(self, smiles: str) -> dict:
+        """
+        Classifies the activity of a molecule based on its SMILES representation.
 
-    with open("Multi-Agent-Drug-Design/Models/ActivityClassifier/model_Morgan_Only.pkl", 'rb') as file:
-        model = pickle.load(file)
+        Args:
+            smiles (str): The SMILES representation of the molecule.
 
-    results = []
-    for smiles in smiles_list:
+        Returns:
+            dict: A dictionary containing the predicted activity.
+        """
         mol = Chem.MolFromSmiles(smiles)
         fp = AllChem.GetMorganFingerprintAsBitVect(
             mol,
@@ -30,7 +28,5 @@ def classify_activity(smiles_list):
         )
         fps = BitVectToText(fp)
         fingerprint_matrix = np.array([list(map(int, fp)) for fp in fps])
-        output = model.predict(fingerprint_matrix.reshape(1, 2048))  # Reshaping here since it has a single sample
-        results.append({"SMILES": smiles, "Activity": "Active" if output > 0.5 else "Inactive"})
-
-    return np.array(results)
+        output = self.model.predict(fingerprint_matrix.reshape(1, 2048))
+        return {"SMILES": smiles, "Activity": "Active" if output > 0.5 else "Inactive"}
