@@ -12,6 +12,9 @@ from utils.utils import load_property_config, extract_hard_filter_keys, extract_
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 PATH_CONFIG = load_property_config("configs/PathConfig.yaml")
 
+NUM_GENERATIONS = 10
+STEPS_PER_GENERATION = 100
+
 def main():
     vae = VAE(model_path="models/vae_model.pt")
     vae.eval()
@@ -32,9 +35,6 @@ def main():
     admet_properties = [hard_filters + soft_filters]
     for i in range(len(admet_properties)):
         agents.append(MedicAgent(f"{admet_properties[i]}", vae, scoring_engine, blackboard))
-
-    NUM_GENERATIONS = 10
-    STEPS_PER_GENERATION = 100
 
     print(f"Starting Discovery Pipeline: {len(agents)} agents initialized.")
 
