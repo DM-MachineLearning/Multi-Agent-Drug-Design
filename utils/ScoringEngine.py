@@ -1,17 +1,17 @@
 import torch
 
-from src.madm.properties.qed import qed_from_smiles
-from src.madm.properties.sa_score import sa_from_smiles
+from qed import qed_from_smiles
+from sa_score import sa_from_smiles
+from activity_classifier import classify_activity
 
 class ScoringEngine:
-    def __init__(self, multitask_model, admet_model_path):
+    def __init__(self, activity_classifier, admet_model_path):
         """
         Args:
-            multitask_model: The loaded MultiTaskADMETModel instance.
-            task_names: List of task strings (BBBP, CYP1A2_inhibition, etc.)
+            activity_classifier: The loaded ActivityClassifier instance.
+            admet_model_path: Path to the ADMET model.
         """
-        self.model = multitask_model
-        self.model.eval()
+        self.activity_classifier = activity_classifier
         self.admet_model_path = admet_model_path
 
     def _get_deterministic_scores(self, z):
@@ -19,7 +19,7 @@ class ScoringEngine:
         return {
             "SA_score": sa_from_smiles(z),
             "QED": qed_from_smiles(z),
-            "pIC50_classifier": 0.0  # TODO: Implement Potency model
+            "pIC50_classifier": classify_activity(z)
         }
     
     def _get_admet_score(self, z):
@@ -45,7 +45,3 @@ class ScoringEngine:
         all_results.update(self._get_admet_score(z))
 
         return all_results
-
-# Example Usage:
-# engine = ScoringEngine(loaded_model, TASK_NAMES)
-# scores = engine.get_all_scores(test_input)
