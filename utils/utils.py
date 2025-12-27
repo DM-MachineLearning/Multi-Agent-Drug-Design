@@ -47,3 +47,42 @@ def extract_property_keys(config):
             else:
                 keys.extend(extract_property_keys(value))
     return keys
+
+def extract_hard_filter_keys(config):
+    """
+    Recursively finds all keys that have 'hard_filter' set to True.
+    """
+    keys = []
+    for key, value in config.items():
+        if isinstance(value, dict):
+            if value.get('hard_filter', False):
+                keys.append(key)
+            else:
+                keys.extend(extract_hard_filter_keys(value))
+    return keys
+
+def extract_soft_filter_keys(config):
+    """
+    Recursively finds all keys that have 'soft_filter' set to True.
+    """
+    keys = []
+    for key, value in config.items():
+        if isinstance(value, dict):
+            if value.get('soft_filter', False):
+                keys.append(key)
+            else:
+                keys.extend(extract_soft_filter_keys(value))
+    return keys
+
+def extract_deterministic_keys(config):
+    """
+    Recursively finds all keys that have 'deterministic' set to True.
+    """
+    keys = []
+    for key, value in config.items():
+        if isinstance(value, dict):
+            if value.get('deterministic', False):
+                keys.append(key)
+            else:
+                keys.extend(extract_deterministic_keys(value))
+    return keys

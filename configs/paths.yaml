@@ -1,0 +1,2 @@
+admet_model_path: "Multi-Agent-Drug-Design/Models/outputs_multitask/multitask_model.pt"
+activity_classifier_model_path: "Multi-Agent-Drug-Design/Models/ActivityClassifier/model_Morgan_Only.pkl"
