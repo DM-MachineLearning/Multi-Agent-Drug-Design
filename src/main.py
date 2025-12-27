@@ -1,6 +1,6 @@
 import csv
 
-from Agents.hunter import HunterAgent
+from Agents.HunterAgent import HunterAgent
 from Agents.MedicAgent import MedicAgent
 
 from Generators.VAE import VAE
