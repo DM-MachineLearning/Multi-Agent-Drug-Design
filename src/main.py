@@ -16,7 +16,7 @@ NUM_GENERATIONS = 10
 STEPS_PER_GENERATION = 100
 
 def main():
-    vae = VAE(model_path="models/vae_model.pt")
+    vae = VAE(model_path="models/vae_model.pt") # TODO: Update model path. Take from config.
     vae.eval()
     
     scoring_engine = ScoringEngine(
