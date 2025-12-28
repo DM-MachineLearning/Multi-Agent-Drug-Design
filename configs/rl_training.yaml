@@ -1,5 +1,0 @@
-batch_size: 32
-gamma: 1.0
-cross_comm_weight: 0.1
-qed_min: 0.4
-sa_max: 6.0
