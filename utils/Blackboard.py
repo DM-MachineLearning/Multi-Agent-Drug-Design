@@ -1,7 +1,7 @@
 import logging
 from collections import deque
 
-from utils import extract_property_keys, load_property_config
+from utils.utils import extract_property_keys, load_property_config
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 
 logging.basicConfig(level=logging.INFO)
