@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AdamW
 
 # --- Import from your existing file ---
-from dataset import SMILESDataset
+from Datasets.SMILES import SMILESDataset
 
 # --- Configuration Loading ---
 _config_path = Path(__file__).resolve().parent / "config.yaml"

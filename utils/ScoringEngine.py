@@ -1,5 +1,5 @@
-from qed import qed_from_smiles
-from sa_score import sa_from_smiles
+from utils.qed import qed_from_smiles
+from utils.sa_score import sa_from_smiles
 from utils.ActivityClassifier import ActivityClassifier
 from utils.ADMETClassifier import ADMETClassifier
 
