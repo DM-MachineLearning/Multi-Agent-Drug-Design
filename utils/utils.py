@@ -72,6 +72,8 @@ def load_property_config(filepath="properties.yaml"):
         except yaml.YAMLError as exc:
             print(f"Error loading YAML: {exc}")
             return None
+    
+    print(config)
 
 def get_property_details(config, property_name):
     """
@@ -108,29 +110,19 @@ def extract_property_keys(config):
 
 def extract_hard_filter_keys(config):
     """
-    Recursively finds all keys that have 'hard_filter' set to True.
+    Extracts property names from the 'hard_filters' section.
     """
-    keys = []
-    for key, value in config.items():
-        if isinstance(value, dict):
-            if value.get('hard_filter', False):
-                keys.append(key)
-            else:
-                keys.extend(extract_hard_filter_keys(value))
-    return keys
+    # Simply get the keys from the 'hard_filters' dictionary if it exists
+    hard_section = config.get('hard_filters', {})
+    return list(hard_section.keys())
 
 def extract_soft_filter_keys(config):
     """
-    Recursively finds all keys that have 'soft_filter' set to True.
+    Extracts property names from the 'soft_filters' section.
     """
-    keys = []
-    for key, value in config.items():
-        if isinstance(value, dict):
-            if value.get('soft_filter', False):
-                keys.append(key)
-            else:
-                keys.extend(extract_soft_filter_keys(value))
-    return keys
+    # Get the keys from the 'soft_filters' dictionary
+    soft_section = config.get('soft_filters', {})
+    return list(soft_section.keys())
 
 def extract_deterministic_keys(config):
     """
