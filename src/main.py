@@ -8,14 +8,14 @@ from utils.ScoringEngine import ScoringEngine
 from utils.utils import load_property_config, extract_hard_filter_keys, extract_soft_filter_keys, update_vae_backbone, write_successful_molecules_to_csv
 
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
-PATH_CONFIG = load_property_config("configs/PathConfig.yaml")
+PATH_CONFIG = load_property_config("configs/paths.yaml")
 
 NUM_GENERATIONS = 10
 STEPS_PER_GENERATION = 100
 
 def main():
     vae = VAE(model_path="models/vae_model.pt") # TODO: Update model path. Take from config.
-    vae.eval()
+    # vae.eval()
 
     # Initialize Scoring Engine and Blackboard
     scoring_engine = ScoringEngine(

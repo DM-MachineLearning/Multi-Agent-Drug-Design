@@ -1,3 +1,3 @@
-admet_model_path: "Multi-Agent-Drug-Design/Models/outputs_multitask/multitask_model.pt"
-activity_classifier_model_path: "Multi-Agent-Drug-Design/Models/ActivityClassifier/model_Morgan_Only.pkl"
-successful_molecules_path: "Multi-Agent-Drug-Design/outputs/successful_molecules.csv"
+admet_model_path: "Models/outputs_multitask/multitask_model.pt"
+activity_classifier_model_path: "Models/ActivityClassifier/model_Morgan_Only.pkl"
+successful_molecules_path: "outputs/successful_molecules.csv"
