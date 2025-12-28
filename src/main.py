@@ -14,8 +14,8 @@ NUM_GENERATIONS = 10
 STEPS_PER_GENERATION = 100
 
 def main():
-    vae = VAE(model_path="models/vae_model.pt") # TODO: Update model path. Take from config.
-    # vae.eval()
+    vae = VAE(model_path=PATH_CONFIG['vae_model_path']) # TODO: Update model path. Take from config.
+    vae.load_model()
 
     # Initialize Scoring Engine and Blackboard
     scoring_engine = ScoringEngine(
@@ -31,12 +31,15 @@ def main():
     soft_filters = extract_soft_filter_keys(PROPERTY_CONFIG)
     for i in range(len(hard_filters)):
         agents.append(HunterAgent(f"{hard_filters[i]}", vae, scoring_engine, blackboard))
+    print(f"Total Hunter Agents: {len(hard_filters)}")
 
-    admet_properties = [hard_filters + soft_filters]
+    admet_properties = hard_filters + soft_filters
     for i in range(len(admet_properties)):
         agents.append(MedicAgent(f"{admet_properties[i]}", vae, scoring_engine, blackboard))
+    print(f"Total Medic Agents: {len(admet_properties)}")
 
     print(f"Starting Discovery Pipeline: {len(agents)} agents initialized.")
+    print("----------------------------------------------------------------------")
 
     # Main Discovery Loop
     for gen in range(NUM_GENERATIONS):
