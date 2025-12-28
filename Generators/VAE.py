@@ -102,7 +102,7 @@ class MolGRUVAE(nn.Module):
             generated_ids.append(token_id)
             curr_token = next_token
             
-        return generated_ids
+        return generated_ids, z
 
 # ==========================================
 # 2. The Management Class (Interface)
@@ -168,15 +168,15 @@ class VAE:
         start_id = self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
         
         with torch.no_grad():
-            token_ids = self.model.sample(
+            token_ids, z = self.model.sample(
                 max_len=max_length,
                 start_token_idx=start_id,
                 tokenizer=self.tokenizer,
                 device=self.device,
                 temp=temperature
             )
-            
-        return self.tokenizer.decode(token_ids, skip_special_tokens=True)
+
+        return token_ids, z
 
     def fine_tune(self, dataset_path: str, epochs: int = 10, batch_size: int = 32, lr: float = 1e-3):
         """

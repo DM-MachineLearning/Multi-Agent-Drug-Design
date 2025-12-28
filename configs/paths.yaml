@@ -1,4 +1,4 @@
 admet_model_path: "Models/outputs_multitask/multitask_model.pt"
-activity_classifier_model_path: "Models/ActivityClassifier/model_Morgan_Only.pkl"
+activity_classifier_model_path: "Models/ActivityClassifier/checkpoints/activity_classifier_mlp.pt"
 successful_molecules_path: "outputs/successful_molecules.csv"
 vae_model_path: "models/vae_model.pt"

@@ -33,10 +33,10 @@ class HunterAgent(BaseAgent):
         2. Optimizes the molecule using gradient ascent towards the agent's objective property.
         3. Analyzes the optimized molecule and routes it accordingly.
         """
-        z_random = self.vae.generate_molecule()
+        token_ids, z_init = self.vae.generate_molecule()
         z_optimized = self.gradient_ascent(
-            z_random, 
-            self.objective, 
+            z_init,
+            self.objective,
             steps=50,
             lr=0.1, 
             constraint_z=None,
