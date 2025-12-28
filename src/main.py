@@ -1,5 +1,3 @@
-import csv
-
 from Agents.HunterAgent import HunterAgent
 from Agents.MedicAgent import MedicAgent
 
@@ -7,7 +5,7 @@ from Generators.VAE import VAE
 
 from utils.Blackboard import Blackboard
 from utils.ScoringEngine import ScoringEngine
-from utils.utils import load_property_config, extract_hard_filter_keys, extract_soft_filter_keys, update_vae_backbone
+from utils.utils import load_property_config, extract_hard_filter_keys, extract_soft_filter_keys, update_vae_backbone, write_successful_molecules_to_csv
 
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 PATH_CONFIG = load_property_config("configs/PathConfig.yaml")
@@ -18,7 +16,8 @@ STEPS_PER_GENERATION = 100
 def main():
     vae = VAE(model_path="models/vae_model.pt") # TODO: Update model path. Take from config.
     vae.eval()
-    
+
+    # Initialize Scoring Engine and Blackboard
     scoring_engine = ScoringEngine(
         activity_classifier_path=PATH_CONFIG['activity_classifier_model_path'],
         admet_model_path=PATH_CONFIG['admet_model_path']
@@ -27,6 +26,7 @@ def main():
     
     agents = []
 
+    # Initialize Hunter and Medic Agents based on property configuration
     hard_filters = extract_hard_filter_keys(PROPERTY_CONFIG)
     soft_filters = extract_soft_filter_keys(PROPERTY_CONFIG)
     for i in range(len(hard_filters)):
@@ -38,6 +38,7 @@ def main():
 
     print(f"Starting Discovery Pipeline: {len(agents)} agents initialized.")
 
+    # Main Discovery Loop
     for gen in range(NUM_GENERATIONS):
         print(f"\n--- STARTING GENERATION {gen} ---")
         for step in range(STEPS_PER_GENERATION):
@@ -50,14 +51,11 @@ def main():
         print(f" - Successful Candidates (Hall of Fame): {num_hits}")
         print(f" - Unsolved Tasks on Blackboard: {tasks_left}")
 
+        # Fine-tune VAE Backbone if enough hits are found. Write successes to CSV.
         if num_hits >= 50:
             print("The Council is meeting: Fine-tuning VAE Backbone on successes...")
             successful_zs = [item[0] for item in blackboard.hall_of_fame]
-            with open(PATH_CONFIG['successful_molecules_path'], 'a', newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                for item in blackboard.hall_of_fame:
-                    writer.writerow([item[1], item[2]])
-            
+            write_successful_molecules_to_csv(blackboard.hall_of_fame, PATH_CONFIG['successful_molecules_path'])
             update_vae_backbone(vae, successful_zs)
             blackboard.hall_of_fame = [] 
 

@@ -1,6 +1,20 @@
 import yaml
 import torch
 import torch.nn.functional as F
+import csv
+
+def write_successful_molecules_to_csv(hall_of_fame, filepath):
+    """
+    Writes successful molecules from the hall of fame to a CSV file.
+    
+    Args:
+        hall_of_fame: List of tuples containing (z_vector, molecule_smiles, score).
+        filepath: Path to the CSV file where data will be appended.
+    """
+    with open(filepath, 'a', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        for item in hall_of_fame:
+            writer.writerow([item[1], item[2]])
 
 def update_vae_backbone(vae, training_samples, kl_weight=0.01):
     """
