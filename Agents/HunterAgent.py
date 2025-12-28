@@ -1,4 +1,4 @@
-from BaseAgent import BaseAgent
+from Agents.BaseAgent import BaseAgent
 
 class HunterAgent(BaseAgent):
     """
