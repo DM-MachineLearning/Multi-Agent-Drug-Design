@@ -28,3 +28,5 @@ env/
 # IDE specific files
 .vscode/
 .idea/
+
+./Models/AdmetClassifier/Auto_ML_dataset/
