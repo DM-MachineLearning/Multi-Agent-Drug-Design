@@ -57,7 +57,7 @@ class ADMETClassifier:
         self.model.eval()
         logger.info(f"Model weights loaded successfully with INPUT_DIM={self.input_dim}.")
 
-    def classify_admet(self, smiles: str) -> dict:
+    def classify_admet(self, smiles) -> dict:
         """
         Classify ADMET properties for a given SMILES string.
 

@@ -21,5 +21,5 @@ class ScoringEngine:
             # "SA_score": sa_from_smiles(z),
             # "QED": qed_from_smiles(z),
             "pIC50_classifier": self.activity_classifier_model.classify_activity(z),
-            # "admet_scores": self.admet_classifier_model.classify_admet(z)
+            "admet_scores": self.admet_classifier_model.classify_admet(z)
         }
