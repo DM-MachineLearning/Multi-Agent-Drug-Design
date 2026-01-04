@@ -16,7 +16,8 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from transformers import PreTrainedTokenizerFast
 
-from Datasets.SMILES import SMILESDataset, BinarySMILESDataset
+from Datasets.SMILESDataset import SMILESDataset
+from Datasets.BinarySMILESDataset import BinarySMILESDataset
 from Generators.metrics import token_reconstruction_accuracy
 from .MolGRUVAE import MolGRUVAE
 

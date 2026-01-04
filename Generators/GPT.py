@@ -7,7 +7,7 @@ from peft import get_peft_model, LoraConfig, TaskType, prepare_model_for_kbit_tr
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, AdamW, BitsAndBytesConfig
 
-from ..Datasets.SMILES import SMILESDataset
+from ..Datasets.SMILESDataset import SMILESDataset
 
 # --- Configuration Loading ---
 _config_path = Path(__file__).resolve().parent / "config.yaml"
