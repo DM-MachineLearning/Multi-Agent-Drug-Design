@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from Agents.HunterAgent import HunterAgent
 from Agents.MedicAgent import MedicAgent
 
@@ -10,12 +15,12 @@ from utils.utils import load_property_config, extract_hard_filter_keys, extract_
 PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 PATH_CONFIG = load_property_config("configs/paths.yaml")
 
-NUM_GENERATIONS = 10
-STEPS_PER_GENERATION = 100
+NUM_GENERATIONS = 100
+STEPS_PER_GENERATION = 1000
 
 def main():
     vae = VAE(model_path=PATH_CONFIG['vae_model_path']) # TODO: Update model path. Take from config.
-    vae.load_model()
+    vae.load_model(vocab_base=PATH_CONFIG['vocab_path'])
 
     # Initialize Scoring Engine and Blackboard
     scoring_engine = ScoringEngine(
@@ -30,8 +35,9 @@ def main():
     hard_filters = extract_hard_filter_keys(PROPERTY_CONFIG)
     soft_filters = extract_soft_filter_keys(PROPERTY_CONFIG)
     for i in range(len(hard_filters)):
-        agents.append(HunterAgent(f"{hard_filters[i]}", vae, scoring_engine, blackboard))
-    print(f"Total Hunter Agents: {len(hard_filters)}")
+        for cnt in range(5):
+            agents.append(HunterAgent(f"{hard_filters[i]}_{cnt}", vae, scoring_engine, blackboard))
+    print(f"Total Hunter Agents: {len(agents)}")
 
     admet_properties = hard_filters + soft_filters
     for i in range(len(admet_properties)):
@@ -64,6 +70,10 @@ def main():
 
     print("\n--- PIPELINE COMPLETE ---")
     print(f"Total Unique Drug Candidates Found: {len(blackboard.hall_of_fame)}")
+
+    print("\n--- QUEUE DIAGNOSTICS ---")
+    for tag, queue in blackboard.task_queues.items():
+        print(f"Task {tag}: {len(queue)} items pending")
 
 if __name__ == "__main__":
     main()

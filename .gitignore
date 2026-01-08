@@ -31,5 +31,7 @@ env/
 
 ./Models/AdmetClassifier/Auto_ML_dataset/
 
+outputs/
+
 *.pt
 trained_vae/

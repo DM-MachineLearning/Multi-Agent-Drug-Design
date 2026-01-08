@@ -2,19 +2,53 @@ import yaml
 import torch
 import torch.nn.functional as F
 import csv
+import os
 
-def write_successful_molecules_to_csv(hall_of_fame, filepath):
-    """
-    Writes successful molecules from the hall of fame to a CSV file.
+# def write_successful_molecules_to_csv(hall_of_fame, filepath):
+#     """
+#     Writes successful molecules from the hall of fame to a CSV file.
     
-    Args:
-        hall_of_fame: List of tuples containing (z_vector, molecule_smiles, score).
-        filepath: Path to the CSV file where data will be appended.
+#     Args:
+#         hall_of_fame: List of tuples containing (z_vector, molecule_smiles, score).
+#         filepath: Path to the CSV file where data will be appended.
+#     """
+#     with open(filepath, 'a', newline='') as csvfile:
+#         writer = csv.writer(csvfile)
+#         for item in hall_of_fame:
+#             writer.writerow([item[1], item[2]])
+
+def write_successful_molecules_to_csv(hall_of_fame, filepath, vae=None):
     """
-    with open(filepath, 'a', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+    Writes successful leads to CSV. 
+    hall_of_fame: list of tuples -> (z, scores)
+    """
+    file_exists = os.path.isfile(filepath)
+    
+    with open(filepath, mode='a', newline='') as f:
+        writer = csv.writer(f)
+        
+        # Write header only if the file is new
+        if not file_exists:
+            writer.writerow(['smiles', 'captions']) 
+            
         for item in hall_of_fame:
-            writer.writerow([item[1], item[2]])
+            # --- FIX 1: Handle the tuple correctly (Only 2 items) ---
+            z = item[0]       # The Latent Vector
+            scores = item[1]  # The Scores Dictionary
+            
+            # --- FIX 2: Translate z to SMILES ---
+            # We use generate_molecule(z=z) which acts as a "Decoder" 
+            # when you provide the z. It does NOT make a new random molecule.
+            if vae is not None:
+                # generate_molecule returns (smiles, z). We only need the smiles.
+                smi, _ = vae.generate_molecule(z=z)
+            else:
+                smi = "Latent_Vector_Only"
+            
+            # Save to CSV
+            writer.writerow([smi, str(scores)])
+
+    print(f"✅ Successfully wrote {len(hall_of_fame)} leads to {filepath}")
 
 def update_vae_backbone(vae, training_samples, kl_weight=0.01):
     """

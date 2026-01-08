@@ -30,6 +30,31 @@ class MedicAgent(BaseAgent):
         super().__init__(specialty_property, vae, engine, board)
         self.specialty = specialty_property
 
+    # def run_step(self):
+    #     """
+    #     Retrieves a task from the blackboard, optimizes the molecule if a task is available,
+    #     or generates a random molecule if no task is present, and analyzes the result.
+    #     """
+    #     task = self.board.fetch_task(self.specialty)
+
+    #     if task:
+    #         flaw_prop, z_start, _ = task
+    #         logger.info(f"Medic {self.specialty}: [FIXING] Optimization for {flaw_prop}")
+
+    #         z_out = self.gradient_ascent(
+    #             z_start, 
+    #             self.specialty,
+    #             steps=20, 
+    #             lr=0.05, 
+    #             constraint_z=z_start,
+    #             lambda_penalty=10.0
+    #         )
+    #     else:
+    #         logger.info(f"Medic {self.specialty}: [IDLE] Switching to Hunter Mode...")
+    #         z_out = self.vae.generate_molecule()
+
+    #     self.analyze_and_route(z_out)
+
     def run_step(self):
         """
         Retrieves a task from the blackboard, optimizes the molecule if a task is available,
@@ -38,7 +63,8 @@ class MedicAgent(BaseAgent):
         task = self.board.fetch_task(self.specialty)
 
         if task:
-            flaw_prop, z_start, _ = task
+            z_start, scores = task
+            flaw_prop = self.specialty
             logger.info(f"Medic {self.specialty}: [FIXING] Optimization for {flaw_prop}")
 
             z_out = self.gradient_ascent(
@@ -51,6 +77,12 @@ class MedicAgent(BaseAgent):
             )
         else:
             logger.info(f"Medic {self.specialty}: [IDLE] Switching to Hunter Mode...")
-            z_out = self.vae.generate_molecule()
+            
+            # --- MINIMAL CHANGE HERE ---
+            # Unpack the tuple. We ignore the SMILES (first item) and keep z (second item).
+            _, z_out = self.vae.generate_molecule()
+            
+            # Optional: You might want to run a quick optimization here too, like a Hunter,
+            # but for purely minimal changes to fix the crash, this is all you need.
 
         self.analyze_and_route(z_out)
