@@ -132,46 +132,94 @@ class VAE:
         if self.tokenizer.bos_token is None:
              self.tokenizer.add_special_tokens({"bos_token": "[BOS]"})
 
-    def generate_molecule(self, num_samples=100, max_length: int=100, temperature: float=0.8) -> list:
-        """
-        Generates molecular SMILES strings using the trained VAE model.
+    # def generate_molecule(self, num_samples=100, max_length: int=100, temperature: float=0.8) -> list:
+    #     """
+    #     Generates molecular SMILES strings using the trained VAE model.
 
-        Samples from the latent space and decodes to generate new SMILES strings.
+    #     Samples from the latent space and decodes to generate new SMILES strings.
+
+    #     Args:
+    #         num_samples (int, optional): Number of SMILES strings to generate. Default is 100.
+    #         max_length (int, optional): Maximum length of generated sequences. Default is 100.
+    #         temperature (float, optional): Sampling temperature for generation. Default is 0.8.
+
+    #     Returns:
+    #         list: List of generated SMILES strings.
+
+    #     Raises:
+    #         RuntimeError: If the model has not been loaded.
+    #     """
+    #     if self.model is None:
+    #         raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+    #     inference_model = self.model.module if hasattr(self.model, "module") else self.model
+    #     inference_model.eval()
+        
+    #     start_id = self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
+    #     generated = []
+        
+    #     with torch.no_grad():
+    #         for _ in range(num_samples):
+    #             token_ids = inference_model.sample(
+    #                 max_len=max_length,
+    #                 start_token_idx=start_id,
+    #                 tokenizer=self.tokenizer,
+    #                 device=self.device,
+    #                 temp=temperature
+    #             )
+    #             smi = self.tokenizer.decode(token_ids, skip_special_tokens=True)
+    #             smi = smi.replace(" ", "")
+    #             generated.append(smi)
+            
+    #     return generated
+
+    def generate_molecule(self, z=None):
+        """
+        Generates a single molecule and returns both its SMILES and Latent Vector (z).
+        This is required for the HunterAgent to perform optimization.
 
         Args:
-            num_samples (int, optional): Number of SMILES strings to generate. Default is 100.
-            max_length (int, optional): Maximum length of generated sequences. Default is 100.
-            temperature (float, optional): Sampling temperature for generation. Default is 0.8.
+            z (torch.Tensor, optional): Provide a specific z to decode. 
+                                        If None, a random z is generated.
 
         Returns:
-            list: List of generated SMILES strings.
-
-        Raises:
-            RuntimeError: If the model has not been loaded.
+            tuple: (smiles_string, z_vector)
         """
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        inference_model = self.model.module if hasattr(self.model, "module") else self.model
-        inference_model.eval()
+        self.model.eval()
         
-        start_id = self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
-        generated = []
-        
+        # 1. Get the Latent Vector (z)
+        if z is None:
+            # Generate random z (1 sample)
+            z = torch.randn(1, self.model.latent_dim).to(self.device)
+        else:
+            z = z.to(self.device)
+
+        # 2. Decode it using the model
         with torch.no_grad():
-            for _ in range(num_samples):
-                token_ids = inference_model.sample(
-                    max_len=max_length,
-                    start_token_idx=start_id,
-                    tokenizer=self.tokenizer,
-                    device=self.device,
-                    temp=temperature
-                )
-                smi = self.tokenizer.decode(token_ids, skip_special_tokens=True)
-                smi = smi.replace(" ", "")
-                generated.append(smi)
-            
-        return generated
+            token_ids = self.model.sample(
+                max_len=100,
+                start_token_idx=self.tokenizer.bos_token_id,
+                tokenizer=self.tokenizer,
+                device=self.device,
+                z=z,        # Pass the z we just created
+                temp=0.8    # Good temperature for diversity
+            )
+
+        # 3. Convert IDs to SMILES
+        # Clean up special tokens
+        clean_ids = [i for i in token_ids if i not in [
+            self.tokenizer.bos_token_id, 
+            self.tokenizer.eos_token_id, 
+            self.tokenizer.pad_token_id
+        ]]
+        
+        smi = self.tokenizer.decode(clean_ids, skip_special_tokens=True).replace(" ", "")
+
+        # 4. Return BOTH
+        return smi, z
 
     def fine_tune(self, dataset_path: str, epochs: int = 10, batch_size: int = 32, lr: float = 1e-3, start_epoch: int = 0, save_dir: str = "./trained_vae"):
         """
