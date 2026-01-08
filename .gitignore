@@ -30,3 +30,6 @@ env/
 .idea/
 
 ./Models/AdmetClassifier/Auto_ML_dataset/
+
+*.pt
+trained_vae/
