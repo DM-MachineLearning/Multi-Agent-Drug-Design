@@ -67,6 +67,8 @@ class VAE:
         self.model_path = model_path
         self.model = None
         self.tokenizer = None
+        self.search_mean = None
+        self.search_std = None
         
         if "LOCAL_RANK" in os.environ:
             self.local_rank = int(os.environ["LOCAL_RANK"])
@@ -173,53 +175,108 @@ class VAE:
             
     #     return generated
 
-    def generate_molecule(self, z=None):
+    def update_search_distribution(self, mean, std):
+        """Updates the sampling region based on successful agents."""
+        self.search_mean = mean.to(self.device)
+        self.search_std = std.to(self.device)
+        print(f"🎯 VAE Search Distribution Shifted! Mean: {mean.mean().item():.4f}")
+
+    def generate_molecule(self, z=None, exploration_rate=0.3):
         """
-        Generates a single molecule and returns both its SMILES and Latent Vector (z).
-        This is required for the HunterAgent to perform optimization.
-
+        Generates a molecule with a mix of 'Gold Mine' focus and 'Wild' exploration.
+        
         Args:
-            z (torch.Tensor, optional): Provide a specific z to decode. 
-                                        If None, a random z is generated.
-
-        Returns:
-            tuple: (smiles_string, z_vector)
+            exploration_rate (float): Probability (0.0 to 1.0) of ignoring the 
+                                      biased distribution and searching randomly.
         """
         if self.model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
+            raise RuntimeError("Model not loaded.")
         
         self.model.eval()
         
-        # 1. Get the Latent Vector (z)
+        # 1. Logic for creating z
         if z is None:
-            # Generate random z (1 sample)
+            # Generate raw noise first
             z = torch.randn(1, self.model.latent_dim).to(self.device)
+            
+            # Check if we have a "Gold Mine" defined (search_mean)
+            if self.search_mean is not None:
+                # Roll a dice. If > rate, we use the Gold Mine.
+                # If < rate, we keep the raw noise (Pure Exploration)
+                if torch.rand(1).item() > exploration_rate:
+                    z = (z * self.search_std) + self.search_mean
+            
         else:
             z = z.to(self.device)
 
-        # 2. Decode it using the model
+        # 2. Decode (Same as before)
         with torch.no_grad():
             token_ids = self.model.sample(
                 max_len=100,
                 start_token_idx=self.tokenizer.bos_token_id,
                 tokenizer=self.tokenizer,
                 device=self.device,
-                z=z,        # Pass the z we just created
-                temp=0.8    # Good temperature for diversity
+                z=z,
+                temp=0.8
             )
 
-        # 3. Convert IDs to SMILES
-        # Clean up special tokens
+        # 3. Clean and Return
         clean_ids = [i for i in token_ids if i not in [
             self.tokenizer.bos_token_id, 
             self.tokenizer.eos_token_id, 
             self.tokenizer.pad_token_id
         ]]
-        
         smi = self.tokenizer.decode(clean_ids, skip_special_tokens=True).replace(" ", "")
 
-        # 4. Return BOTH
         return smi, z
+    
+    # def generate_molecule(self, z=None):
+    #     """
+    #     Generates a single molecule and returns both its SMILES and Latent Vector (z).
+    #     This is required for the HunterAgent to perform optimization.
+
+    #     Args:
+    #         z (torch.Tensor, optional): Provide a specific z to decode. 
+    #                                     If None, a random z is generated.
+
+    #     Returns:
+    #         tuple: (smiles_string, z_vector)
+    #     """
+    #     if self.model is None:
+    #         raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+    #     self.model.eval()
+        
+    #     # 1. Get the Latent Vector (z)
+    #     if z is None:
+    #         # Generate random z (1 sample)
+    #         z = torch.randn(1, self.model.latent_dim).to(self.device)
+    #     else:
+    #         z = z.to(self.device)
+
+    #     # 2. Decode it using the model
+    #     with torch.no_grad():
+    #         token_ids = self.model.sample(
+    #             max_len=100,
+    #             start_token_idx=self.tokenizer.bos_token_id,
+    #             tokenizer=self.tokenizer,
+    #             device=self.device,
+    #             z=z,        # Pass the z we just created
+    #             temp=0.8    # Good temperature for diversity
+    #         )
+
+    #     # 3. Convert IDs to SMILES
+    #     # Clean up special tokens
+    #     clean_ids = [i for i in token_ids if i not in [
+    #         self.tokenizer.bos_token_id, 
+    #         self.tokenizer.eos_token_id, 
+    #         self.tokenizer.pad_token_id
+    #     ]]
+        
+    #     smi = self.tokenizer.decode(clean_ids, skip_special_tokens=True).replace(" ", "")
+
+    #     # 4. Return BOTH
+    #     return smi, z
 
     def fine_tune(self, dataset_path: str, epochs: int = 10, batch_size: int = 32, lr: float = 1e-3, start_epoch: int = 0, save_dir: str = "./trained_vae"):
         """
