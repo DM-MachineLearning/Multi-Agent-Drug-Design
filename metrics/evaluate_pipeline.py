@@ -71,5 +71,8 @@ def run_full_evaluation(filepath):
 
 if __name__ == "__main__":
     # Update with your actual CSV path
-    run_full_evaluation("outputs/exploration_updateMeanVar.csv")
+    # run_full_evaluation("outputs/exploration_updateMeanVar.csv")
+    # run_full_evaluation("outputs/exploration_updateMeanVar_50update_CLEAN.csv")
+    # run_full_evaluation("outputs/successful_molecules_scaffold_sample_5_soft.csv")
+    run_full_evaluation("outputs/successful_molecules_scaffold.csv")
     # run_full_evaluation("outputs/run1.csv")

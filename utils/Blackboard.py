@@ -37,6 +37,7 @@ class Blackboard:
 
         self.task_queues = {f"needs_fix:{k}": deque() for k in all_properties}
         self.hall_of_fame = []
+        self.z_anchor = None
 
     def post_task(self, property_to_fix, z, current_scores):
         """
@@ -69,8 +70,8 @@ class Blackboard:
         tag = f"needs_fix:{property_to_fix}"
         if tag in self.task_queues and self.task_queues[tag]:
             return self.task_queues[tag].popleft()
-        else:
-            print(f"Warning: No task found for {property_to_fix}. Need to turn back to exploration.")
+        # else:
+            # print(f"Warning: No task found for {property_to_fix}. Need to turn back to exploration.")
         return None
     
     def post_to_hall_of_fame(self, z, scores):

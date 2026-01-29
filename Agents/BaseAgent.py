@@ -120,6 +120,7 @@ class BaseAgent:
                 maximize = False
 
         # print(f"   ⚗️ Optimizing {objective_prop}...") 
+        print(f"tasks = {self.scorer.admet_classifier_model.task_names}")
 
         for i in range(steps):
             optimizer.zero_grad()
@@ -264,7 +265,7 @@ class BaseAgent:
         # --- 4. HARD FILTERS (Non-Negotiable) ---
         hard_filter_result = self.check_if_molecule_passes_filters('hard', scores)
         if hard_filter_result is not True:
-            logger.info(f"Agent {self.agent_property}: Failed Hard Filter {hard_filter_result}")
+            # logger.info(f"Agent {self.agent_property}: Failed Hard Filter {hard_filter_result}")
             return # Failed a hard constraint (e.g., hERG toxicity), discard.
 
         # --- 5. SOFT FILTERS (Fixable Flaws) ---
@@ -278,7 +279,7 @@ class BaseAgent:
             self.board.hall_of_fame.append((z, scores))
             
             # 2. Log it
-            logger.info(f"Agent {self.agent_property}: 🏆 FOUND SUCCESSFUL LEAD! SMILES: {smi_check}")
+            # logger.info(f"Agent {self.agent_property}: 🏆 FOUND SUCCESSFUL LEAD! SMILES: {smi_check}")
             
             # 3. Save to CSV IMMEDIATELY (Safety feature)
             self.write_lead_to_csv(smi_check, scores)
@@ -303,6 +304,53 @@ class BaseAgent:
             # Write row
             writer.writerow([smiles, str(scores)])
 
+    # def check_if_molecule_passes_filters(self, type_of_filter: str, scores: dict):
+    #     """
+    #     Checks filters with different logic for Hard vs Soft:
+    #     - HARD: Strict AND logic (Must pass ALL).
+    #     - SOFT: Majority logic (Must pass at least 5).
+        
+    #     Returns:
+    #     - True: If it passes.
+    #     - Property Name (str): The name of a failed property if it fails.
+    #     """
+    #     filter_key = 'hard_filters' if type_of_filter == 'hard' else 'soft_filters'
+    #     # Safely get the filters dict; default to empty if not found
+    #     filters = PROPERTY_CONFIG.get(filter_key, {}) 
+        
+    #     # --- LOGIC 1: HARD FILTERS (STRICT) ---
+    #     if type_of_filter == 'hard':
+    #         for prop, cfg in filters.items():
+    #             # Check if bad
+    #             is_bad = (scores[prop] > cfg['threshold']) if cfg['target'] == 'low' else (scores[prop] < cfg['threshold'])
+    #             if is_bad:
+    #                 return prop  # Fail immediately on first hard violation
+    #         return True
+
+    #     # --- LOGIC 2: SOFT FILTERS (VOTING 5/9) ---
+    #     else:
+    #         passed_count = 0
+    #         failed_props = []
+
+    #         for prop, cfg in filters.items():
+    #             # Check if bad
+    #             is_bad = (scores[prop] > cfg['threshold']) if cfg['target'] == 'low' else (scores[prop] < cfg['threshold'])
+                
+    #             if not is_bad:
+    #                 passed_count += 1
+    #             else:
+    #                 failed_props.append(prop)
+            
+    #         # THE RELAXATION RULE:
+    #         # If we passed 5 or more, we consider the molecule "Good Enough"
+    #         if passed_count >= 5:
+    #             return True
+    #         else:
+    #             # If we passed fewer than 5, we fail.
+    #             # Return the FIRST failed property so the Medic has something specific to fix.
+    #             # print(f"Property is {failed_props[0]}, Score is {scores[failed_props[0]]}, threshold is {cfg['threshold']}")
+    #             return failed_props[0] if failed_props else True
+            
     def check_if_molecule_passes_filters(self, type_of_filter: str, scores: dict):
         """
         Checks if a molecule passes all filters of a given type (hard or soft).

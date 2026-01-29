@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import csv
 import os
+import random
 
 # def write_successful_molecules_to_csv(hall_of_fame, filepath):
 #     """
@@ -127,6 +128,60 @@ def update_vae_backbone(vae, successful_zs):
         print("❌ Error: VAE class missing 'update_search_distribution' method.")
         
     print(f"✅ VAE Backbone Updated: Sampling focus shifted to new high-yield region.")
+
+def get_random_scaffold_anchor(vae, scaffolds_path):
+    """
+    Reads a file of scaffolds, picks one at random, and encodes it 
+    into a latent vector (z_anchor) using the VAE's specific GRU architecture.
+
+    Args:
+        vae: The initialized VAE wrapper object.
+        scaffolds_path (str): Path to the text file containing SMILES (one per line).
+
+    Returns:
+        torch.Tensor: The latent mean (mu) of the selected scaffold.
+    """
+    if not os.path.exists(scaffolds_path):
+        print(f"⚠️ Scaffold file not found at {scaffolds_path}. Using random initialization.")
+        return None
+
+    # 1. Load and Sample
+    with open(scaffolds_path, "r") as f:
+        # Filter out empty lines just in case
+        scaffolds = [line.strip() for line in f.readlines() if line.strip()]
+    
+    if not scaffolds:
+        print("⚠️ Scaffold file is empty.")
+        return None
+
+    selected_scaffold = random.choice(scaffolds)
+    # print(f"⚓ Selected Anchor Scaffold: {selected_scaffold}")
+
+    # 2. Encode using the specific MolGRUVAE logic
+    # We use the tokenizer from the VAE wrapper
+    try:
+        tokens = vae.tokenizer.encode(selected_scaffold, return_tensors="pt").to(vae.device)
+
+        with torch.no_grad():
+            # Embed
+            embedded = vae.model.embedding(tokens)
+            
+            # Run GRU (Forward + Backward hidden states)
+            _, h_n = vae.model.encoder_gru(embedded)
+            
+            # Concatenate the bidirectional states
+            # h_n shape is [2, batch, hidden] -> [0] is FWD, [1] is BWD
+            h_n_concat = torch.cat((h_n[0], h_n[1]), dim=1)
+            
+            # Project to Latent Space (Mean)
+            mu = vae.model.fc_mu(h_n_concat)
+            
+        # print(f"✅ Encoded Anchor z-vector (Mean: {mu.mean().item():.4f})")
+        return mu
+
+    except Exception as e:
+        print(f"❌ Failed to encode scaffold '{selected_scaffold}': {e}")
+        return None
     
 def load_property_config(filepath="properties.yaml"):
     """

@@ -160,7 +160,7 @@ class ADMETClassifier:
             self.model.load_state_dict(checkpoint)
             
         self.model.to(self.device).eval()
-        logger.info(f"✅ ADMET Classifier Ready (Global AUC ~0.79).")
+        logger.info(f"✅ ADMET Classifier Ready from {model_path}")
 
     def classify_admet(self, z: torch.Tensor) -> dict:
         """
@@ -178,9 +178,16 @@ class ADMETClassifier:
         z = z.to(self.device)
 
         with torch.no_grad():
-            logits = self.model(z) # Shape: [1, 11]
-            probs = torch.sigmoid(logits).cpu().squeeze(0)
+            # Inside your prediction function:
+            # print(f"DEBUG Z-Vector Stats: Mean={z.mean().item():.3f}, Min={z.min().item():.3f}, Max={z.max().item():.3f}")
 
+            # Then call the model
+            logits = self.model(z) # Shape: [1, 11]
+            logits = torch.clamp(logits, min=-10.0, max=10.0)
+            temperature = 2.0  # T > 1 softens the distribution
+            probs = torch.sigmoid(logits / temperature).cpu().squeeze(0)
+        
+        # print("Printing", {task: probs[i].item() for i, task in enumerate(self.task_names)})
         # Map back to task names
         return {task: probs[i].item() for i, task in enumerate(self.task_names)}
     

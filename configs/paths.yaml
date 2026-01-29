@@ -1,7 +1,15 @@
 admet_model_path: "admet_predictor_bidirec_1000epochs.pt"
 activity_classifier_model_path: "Models/ActivityClassifier/checkpoints/activity_classifier_mlp.pt"
+scaffolds_path: "outputs/top_100_scaffolds.txt"  # <--- Add this line
+
+
 # successful_molecules_path: "outputs/successful_molecules.csv"
-successful_molecules_path: "outputs/exploration_updateMeanVar.csv"
+# successful_molecules_path: "outputs/exploration_updateMeanVar.csv"
+# successful_molecules_path: "outputs/exploration_updateMeanVar_50update.csv"
+successful_molecules_path: "test.csv"
+# successful_molecules_path: "outputs/successful_molecules_scaffold.csv"
+# successful_molecules_path: "outputs/successful_molecules_scaffold_sample_5_soft.csv"
+
 # vae_model_path: "models/vae_model.pt"
 vae_model_path: "trained_vae/vae_weights_bidirec.pt"
 vocab_path: "vocab.json"
