@@ -35,3 +35,8 @@ outputs/
 
 *.pt
 trained_vae/
+
+Benchmarks/
+Benchmarks_new/
+data/*.csv
+
