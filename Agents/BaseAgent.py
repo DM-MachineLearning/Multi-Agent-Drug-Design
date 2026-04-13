@@ -57,47 +57,6 @@ class BaseAgent:
         self.vae = vae_backbone
         self.scorer = scoring_engine
         self.board = blackboard
-        
-    # def gradient_ascent(self, z, objective_prop, steps=20, lr=0.1, constraint_z=None, lambda_penalty=10.0):
-    #     """
-    #     Performs gradient ascent in the latent space to optimize a molecule for a specific property.
-        
-    #     Parameters:
-    #     - z (torch.Tensor): The initial latent vector.
-    #     - objective_prop (str): The property to optimize.
-    #     - steps (int): Number of optimization steps.
-    #     - lr (float): Learning rate for the optimizer.
-    #     - constraint_z (torch.Tensor or None): Optional latent vector to constrain similarity.
-    #     - lambda_penalty (float): Penalty weight for deviation from constraint_z.
-
-    #     Returns:
-    #     - torch.Tensor: The optimized latent vector.
-    #     """
-    #     z = z.detach().clone().requires_grad_(True)
-    #     optimizer = torch.optim.Adam([z], lr=lr)
-
-    #     target_cfg = get_property_details(PROPERTY_CONFIG, objective_prop)
-    #     if target_cfg is None:
-    #         raise ValueError(f"Property {objective_prop} not found in configuration.")
-
-    #     maximize = (target_cfg['target'] == 'high') # Determine if we are maximizing or minimizing the property
-
-    #     for _ in range(steps):
-    #         optimizer.zero_grad()
-    #         score = self.scorer.get_all_scores(z)
-    #         score = score[objective_prop]
-            
-    #         loss = -score if maximize else score # Define loss based on optimization direction (maximize or minimize)
-            
-    #         # Apply constraint penalty if provided
-    #         if constraint_z is not None:
-    #             dist = F.mse_loss(z, constraint_z)
-    #             loss += lambda_penalty * dist
-
-    #         loss.backward()
-    #         optimizer.step()
-
-    #     return z.detach()
 
     def gradient_ascent(self, z, objective_prop, steps=50, lr=0.01, constraint_z=None, lambda_penalty=10.0):
         """
@@ -119,14 +78,11 @@ class BaseAgent:
             if 'toxicity' in objective_prop.lower() or 'inhibition' in objective_prop.lower():
                 maximize = False
 
-        # print(f"   ⚗️ Optimizing {objective_prop}...") 
-        print(f"tasks = {self.scorer.admet_classifier_model.task_names}")
+        print(f"   ⚗️ Optimizing {objective_prop}...") 
+        # print(f"tasks = {self.scorer.admet_classifier_model.task_names}")
 
         for i in range(steps):
             optimizer.zero_grad()
-            
-            # --- 3. THE FIX: Access Model via self.scorer ---
-            # We check if the property belongs to ADMET or Potency
             
             # Case A: It is an ADMET property (BBBP, Toxicity, etc.)
             if objective_prop in self.scorer.admet_classifier_model.task_names:
@@ -135,30 +91,19 @@ class BaseAgent:
             
             # Case B: It is Potency/Activity
             elif objective_prop == 'potency':
-                # You must ensure your Activity Model also has a tensor method!
-                # If not, you might need to implement get_activity_tensor(z)
                 score = self.scorer.activity_classifier_model.classify_activity(z)
             
             else:
-                # Fallback: Try to get it from generic scores (Risk of crash if not tensor)
-                # This matches your "old style" request but acts as a fallback
                 all_scores = self.scorer.get_all_scores(z)
                 score = all_scores.get(objective_prop)
                 if not isinstance(score, torch.Tensor):
-                    # If it's a float, we can't optimize. Stop to prevent crash.
-                    # print(f"⚠️ Cannot optimize {objective_prop} (No gradient).")
                     break
 
-            # --- 4. Define Loss ---
-            # Maximize = Minimize negative score
             task_loss = -score if maximize else score
             
-            # --- 5. The "Safety Leash" ---
-            # Prevents z from exploding into invalid chemical space
             prior_loss = (z ** 2).mean()
             total_loss = task_loss + (5.0 * prior_loss)
 
-            # --- 6. Constraint Penalty (for Medic Agents) ---
             if constraint_z is not None:
                 constraint_z = constraint_z.to(self.device)
                 dist_loss = torch.nn.functional.mse_loss(z, constraint_z)
@@ -172,58 +117,6 @@ class BaseAgent:
             optimizer.step()
 
         return z.detach()
-
-    # def analyze_and_route(self, z):
-    #     """
-    #     Analyzes the scores of a molecule and decides its fate (Success, Failure, Fixable).
-    #     Firstly, checks primary success (potency). If Potency threshold is not met, the molecule is discarded.
-    #     Then checks hard filters (immediate discard if failed).
-    #     Finally, checks soft filters (fixable flaws). If any soft filter fails, the molecule is posted back to the blackboard for further optimization.
-
-    #     Parameters:
-    #     - z (torch.Tensor): The latent vector of the molecule to analyze.
-
-    #     Returns:
-    #     - None
-
-    #     Changes:
-    #     - Updates the blackboard with successful leads or posts tasks for fixable flaws.
-    #     """
-    #     scores = self.scorer.get_all_scores(z)
-        
-    #     # 1. Check Primary Success Criterion (Potency/Activity)
-    #     potency_cfg = PROPERTY_CONFIG.get('potency')
-    #     if scores['potency'] < potency_cfg['threshold']:
-    #         return
-
-    #     # 2. Check Hard Filters (These are "Non-Negotiable" flaws)
-    #     hard_filter_result = self.check_if_molecule_passes_filters('hard', scores)
-    #     if hard_filter_result is not True:
-    #         logger.warning(f"Agent {self.agent_property}: Discarded due to Hard Filter: {hard_filter_result}")
-    #         return
-
-    #     # 3. Check Soft Filters (These are "Fixable" flaws)
-    #     flaws = []
-    #     soft_filter_result = self.check_if_molecule_passes_filters('soft', scores)
-    #     if soft_filter_result is not True:
-    #         flaws.append(soft_filter_result)
-
-    #     # 4. Route Molecule Based on Analysis
-    #     if not flaws:
-    #         self.board.hall_of_fame.append((z, scores))
-    #         logger.info(f"Agent {self.agent_property}: FOUND SUCCESSFUL LEAD! WRTING TO CSV!")
-    #         write_successful_molecules_to_csv(
-    #             self.board.hall_of_fame, 
-    #             PATH_CONFIG['successful_molecules_path'],
-    #             vae=self.vae
-    #         )
-    #     else:
-    #         flaws.sort(key=lambda x: PROPERTY_CONFIG['soft_filters'].get(x, {}).get('weight', 0), reverse=True)
-    #         primary_flaw = flaws[0]
-            
-    #         self.board.post_task(primary_flaw, z, scores)
-    #         logger.info(f"Agent {self.agent_property}: Potent but needs fix for {primary_flaw}. Posted to Board.")
-
 
     def analyze_and_route(self, z):
         """
@@ -304,53 +197,6 @@ class BaseAgent:
             # Write row
             writer.writerow([smiles, str(scores)])
 
-    # def check_if_molecule_passes_filters(self, type_of_filter: str, scores: dict):
-    #     """
-    #     Checks filters with different logic for Hard vs Soft:
-    #     - HARD: Strict AND logic (Must pass ALL).
-    #     - SOFT: Majority logic (Must pass at least 5).
-        
-    #     Returns:
-    #     - True: If it passes.
-    #     - Property Name (str): The name of a failed property if it fails.
-    #     """
-    #     filter_key = 'hard_filters' if type_of_filter == 'hard' else 'soft_filters'
-    #     # Safely get the filters dict; default to empty if not found
-    #     filters = PROPERTY_CONFIG.get(filter_key, {}) 
-        
-    #     # --- LOGIC 1: HARD FILTERS (STRICT) ---
-    #     if type_of_filter == 'hard':
-    #         for prop, cfg in filters.items():
-    #             # Check if bad
-    #             is_bad = (scores[prop] > cfg['threshold']) if cfg['target'] == 'low' else (scores[prop] < cfg['threshold'])
-    #             if is_bad:
-    #                 return prop  # Fail immediately on first hard violation
-    #         return True
-
-    #     # --- LOGIC 2: SOFT FILTERS (VOTING 5/9) ---
-    #     else:
-    #         passed_count = 0
-    #         failed_props = []
-
-    #         for prop, cfg in filters.items():
-    #             # Check if bad
-    #             is_bad = (scores[prop] > cfg['threshold']) if cfg['target'] == 'low' else (scores[prop] < cfg['threshold'])
-                
-    #             if not is_bad:
-    #                 passed_count += 1
-    #             else:
-    #                 failed_props.append(prop)
-            
-    #         # THE RELAXATION RULE:
-    #         # If we passed 5 or more, we consider the molecule "Good Enough"
-    #         if passed_count >= 5:
-    #             return True
-    #         else:
-    #             # If we passed fewer than 5, we fail.
-    #             # Return the FIRST failed property so the Medic has something specific to fix.
-    #             # print(f"Property is {failed_props[0]}, Score is {scores[failed_props[0]]}, threshold is {cfg['threshold']}")
-    #             return failed_props[0] if failed_props else True
-            
     def check_if_molecule_passes_filters(self, type_of_filter: str, scores: dict):
         """
         Checks if a molecule passes all filters of a given type (hard or soft).

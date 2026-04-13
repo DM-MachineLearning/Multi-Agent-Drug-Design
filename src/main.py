@@ -6,8 +6,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Agents.HunterAgent import HunterAgent
 from Agents.MedicAgent import MedicAgent
 
-import torch
-
 from Generators.VAE import VAE
 
 from utils.Blackboard import Blackboard
