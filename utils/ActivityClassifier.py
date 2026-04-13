@@ -37,27 +37,4 @@ class ActivityClassifier:
         Returns:
             dict: A dictionary containing the predicted activity.
         """
-        # mol = Chem.MolFromSmiles(smiles) # Convert SMILES to RDKit molecule
-        # if mol is None:
-        #     raise ValueError("Invalid SMILES string provided.")
-
-        # # Generate Morgan fingerprint
-        # fp = AllChem.GetMorganFingerprintAsBitVect(
-        #     mol,
-        #     radius=2,
-        #     nBits=2048
-        # )
-
-        # # Convert fingerprint to text representation
-        # fps = BitVectToText(fp)
-        
-        # # Convert fingerprint text to numpy array
-        # fingerprint_matrix = np.array([list(map(int, fp)) for fp in fps])
-        
-        # Predict activity using the pre-trained model
-        # output = self.model(torch.tensor(smiles, dtype=torch.float32).to(self.device))
-        
-        # return {"SMILES": smiles, "Activity": "Active" if output > 0.5 else "Inactive"}
-
-        logits = self.model(z)
-        return torch.sigmoid(logits)
+        return torch.sigmoid(self.model(z))

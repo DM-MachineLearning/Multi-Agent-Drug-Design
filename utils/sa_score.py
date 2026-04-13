@@ -6,10 +6,6 @@ import pickle
 import gzip
 import os.path as op
 
-# The file `fpscores.pkl.gz` (RDKit/Novartis fragment scores) should
-# be placed alongside this module. If missing, the function will
-# conservatively return 10.0 for invalid/missing resources.
-
 _fscores = None
 mfpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2)
 
