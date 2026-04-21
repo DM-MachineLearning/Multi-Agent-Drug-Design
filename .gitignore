@@ -40,3 +40,7 @@ Benchmarks/
 Benchmarks_new/
 data/*.csv
 
+*.pt
+*.pkl
+teacher_models/
+admet_distill_data.pt
