@@ -20,6 +20,7 @@ from Datasets.SMILESDataset import SMILESDataset
 from Datasets.BinarySMILESDataset import BinarySMILESDataset
 from Generators.metrics import token_reconstruction_accuracy
 from .MolGRUVAE import MolGRUVAE
+from .MolTransformerVAE import MolTransformerVAE
 
 
 lg = RDLogger.logger()
@@ -77,16 +78,13 @@ class VAE:
             self.local_rank = 0
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def load_model(self, vocab_base=None):
+    def load_model(self, vocab_base=None, model_type="transformer"):
         """
-        Loads the tokenizer and initializes the VAE model.
-
-        Loads a tokenizer from a local JSON file or a pre-trained model, initializes the MolGRUVAE model
-        with the appropriate vocabulary size, and optionally loads pre-trained weights if available.
+        Loads the tokenizer and initializes the VAE model (GRU or Transformer).
 
         Args:
             vocab_base (str, optional): Path to a local tokenizer JSON file or name of a pre-trained tokenizer.
-                                       If None, defaults to 'gpt2'.
+            model_type (str): "gru" or "transformer".
         """
         if vocab_base and vocab_base.endswith('.json'):
             if self.local_rank == 0:
@@ -106,7 +104,11 @@ class VAE:
             )
         
         vocab_size = len(self.tokenizer)
-        self.model = MolGRUVAE(vocab_size=vocab_size).to(self.device)
+        
+        if model_type == "transformer":
+            self.model = MolTransformerVAE(vocab_size=vocab_size).to(self.device)
+        else:
+            self.model = MolGRUVAE(vocab_size=vocab_size).to(self.device)
 
         if self.model_path and Path(self.model_path).exists():
             state_dict = torch.load(self.model_path, map_location=self.device)
@@ -168,10 +170,10 @@ class VAE:
         else:
             z = z.to(self.device)
 
-        # 2. Decode (Same as before)
+        # 2. Decode (Increased max_len to 128 to match Transformer training)
         with torch.no_grad():
             token_ids = self.model.sample(
-                max_len=100,
+                max_len=128,
                 start_token_idx=self.tokenizer.bos_token_id,
                 tokenizer=self.tokenizer,
                 device=self.device,
@@ -186,6 +188,12 @@ class VAE:
             self.tokenizer.pad_token_id
         ]]
         smi = self.tokenizer.decode(clean_ids, skip_special_tokens=True).replace(" ", "")
+
+        # 4. Salt Stripping (Take the largest fragment if multiple exist)
+        if "." in smi:
+            fragments = smi.split(".")
+            # Keep the fragment with the most atoms/characters
+            smi = max(fragments, key=len)
 
         return smi, z
 

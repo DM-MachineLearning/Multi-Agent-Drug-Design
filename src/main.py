@@ -16,7 +16,7 @@ PROPERTY_CONFIG = load_property_config("configs/PropertyConfig.yaml")
 PATH_CONFIG = load_property_config("configs/paths.yaml")
 
 NUM_GENERATIONS = 100
-STEPS_PER_GENERATION = 1000
+STEPS_PER_GENERATION = 10
 
 GOLDEN_SCAFFOLD = "O=C(Cc1nc(N2CCOCC2)cc(=O)[nH]1)N1CCc2ccccc21"
 

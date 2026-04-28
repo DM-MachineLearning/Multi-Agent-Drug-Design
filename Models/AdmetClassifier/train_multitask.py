@@ -35,7 +35,7 @@ class MultiHeadADMET(nn.Module):
 # --- 2. Dataset Loader ---
 class LatentDataset(Dataset):
     def __init__(self, processed_path):
-        data_pack = torch.load(processed_path)
+        data_pack = torch.load(processed_path, weights_only=False)
         self.samples = data_pack['data']
         self.tasks = data_pack['tasks']
         self.latent_dim = data_pack['latent_dim']
