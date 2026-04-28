@@ -17,12 +17,7 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, :x.size(1)]
 
 class MolTransformerVAE(nn.Module):
-    """
-    ULTIMATE Transformer-based VAE for SMILES.
-    Architecture: 6 Layers, 512-dim d_model, 512-dim Latent Space.
-    Matches the weights in admet_predictor_ultimate.pt
-    """
-    def __init__(self, vocab_size, d_model=512, nhead=8, num_layers=6, dim_feedforward=2048, latent_dim=512, max_len=1024):
+    def __init__(self, vocab_size, d_model=512, nhead=8, num_layers=6, dim_feedforward=2048, latent_dim=128, max_len=1024):
         super().__init__()
         self.d_model = d_model
         self.latent_dim = latent_dim
@@ -31,9 +26,10 @@ class MolTransformerVAE(nn.Module):
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pos_encoder = PositionalEncoding(d_model, max_len)
         
+        # FIX 1: norm_first=True (Pre-LN) prevents FP16 gradient explosions
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, 
-            batch_first=True, activation='gelu', dropout=0.1
+            batch_first=True, activation='gelu', dropout=0.1, norm_first=True
         )
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
@@ -42,9 +38,10 @@ class MolTransformerVAE(nn.Module):
 
         self.latent_to_decoder = nn.Linear(latent_dim, d_model)
         
+        # FIX 1: norm_first=True (Pre-LN)
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
-            batch_first=True, activation='gelu', dropout=0.1
+            batch_first=True, activation='gelu', dropout=0.1, norm_first=True
         )
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
         
@@ -76,14 +73,16 @@ class MolTransformerVAE(nn.Module):
         z = self.reparameterize(mu, logvar)
         
         tgt_input = input_ids[:, :-1]
-        tgt_mask = self.generate_square_subsequent_mask(seq_len - 1, device)
+        tgt_seq_len = tgt_input.size(1)
+        tgt_mask = self.generate_square_subsequent_mask(tgt_seq_len, device)
         tgt_key_padding_mask = (tgt_input == 0)
         
         tgt_embed = self.embedding(tgt_input) * math.sqrt(self.d_model)
         tgt_embed = self.pos_encoder(tgt_embed)
         
-        # memory = self.latent_to_decoder(z).unsqueeze(1)
-        memory = self.latent_to_decoder(z).unsqueeze(1).repeat(1, seq_len - 1, 1)
+        # FIX 2: Do NOT repeat the memory. Pass the single projected vector.
+        memory = self.latent_to_decoder(z).unsqueeze(1) # Shape: (batch, 1, d_model)
+        
         dec_output = self.transformer_decoder(
             tgt_embed, memory, 
             tgt_mask=tgt_mask, 
@@ -100,25 +99,18 @@ class MolTransformerVAE(nn.Module):
         else:
             z = z.to(device)
         
-        # 1. Project the latent vector
-        # Shape: [1, d_model]
-        z_projected = self.latent_to_decoder(z) 
-        
+        z_projected = self.latent_to_decoder(z)
         generated = torch.tensor([[start_token_idx]], device=device)
         
+        # FIX 2: Apply the same memory fix to the sampling logic
+        memory = z_projected.unsqueeze(1) # Shape: (1, 1, d_model)
+        
         for _ in range(max_len):
-            # 2. Get the current sequence length of what we've built so far
             curr_seq_len = generated.size(1)
-            
-            # 3. Expand memory to match the current sequence length
-            # Shape: [1, curr_seq_len, d_model]
-            memory = z_projected.unsqueeze(1).repeat(1, curr_seq_len, 1)
-            
             tgt_mask = self.generate_square_subsequent_mask(curr_seq_len, device)
             tgt_embed = self.embedding(generated) * math.sqrt(self.d_model)
             tgt_embed = self.pos_encoder(tgt_embed)
             
-            # 4. Pass the expanded memory into the decoder
             output = self.transformer_decoder(tgt_embed, memory, tgt_mask=tgt_mask)
             logits = self.fc_out(output[:, -1, :]) / temp
             
